@@ -425,6 +425,73 @@
       cursor: default;
     }
 
+    /* ========== Rest Toggle Row ========== */
+    .rest-row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 10px;
+      gap: 8px;
+    }
+    .rest-row:last-child { margin-bottom: 0; }
+    .rest-row .field-name {
+      font-size: 14px;
+      color: #777;
+      white-space: nowrap;
+      min-width: 56px;
+    }
+    .btn-rest {
+      height: 40px;
+      padding: 0 14px;
+      border: 1.5px solid #e0e0e0;
+      border-radius: 8px;
+      background: #fafafa;
+      color: #999;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+    .btn-rest.active {
+      background: #ff9800;
+      border-color: #ff9800;
+      color: #fff;
+      font-weight: 600;
+    }
+    .btn-rest:active { transform: scale(0.96); }
+    .rest-row input {
+      flex: 1;
+      height: 40px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 0 12px;
+      font-size: 15px;
+      color: #333;
+      outline: none;
+      transition: border-color 0.2s;
+      background: #fafafa;
+      text-align: right;
+      -webkit-user-select: text;
+      user-select: text;
+      -webkit-touch-callout: default;
+    }
+    .rest-row input:focus {
+      border-color: #999;
+      background: #fff;
+    }
+    .rest-row input:disabled {
+      background: #f0f0f0;
+      color: #ccc;
+    }
+    .rest-row input::placeholder { color: #ccc; }
+    .rest-row .unit {
+      font-size: 14px;
+      color: #999;
+      min-width: 24px;
+      text-align: left;
+    }
+
     /* Safe area for iPhone notch */
     @supports (padding-top: env(safe-area-inset-top)) {
       .header { padding-top: calc(16px + env(safe-area-inset-top)); }
@@ -483,6 +550,35 @@
       </div>
     </div>
 
+    <!-- 企业微信添加人数 -->
+    <div class="card">
+      <div class="card-label"><span class="left"><span class="icon-dot"></span>企业微信添加人数</span></div>
+      <div class="rest-row">
+        <span class="field-name">蒋濠</span>
+        <button class="btn-rest" id="restBtn0" onclick="toggleRest(0)">休</button>
+        <input type="text" inputmode="numeric" id="addCount0" placeholder="0">
+        <span class="unit">人</span>
+      </div>
+      <div class="rest-row">
+        <span class="field-name">薛梓彦</span>
+        <button class="btn-rest" id="restBtn1" onclick="toggleRest(1)">休</button>
+        <input type="text" inputmode="numeric" id="addCount1" placeholder="0">
+        <span class="unit">人</span>
+      </div>
+      <div class="rest-row">
+        <span class="field-name">张钦华</span>
+        <button class="btn-rest" id="restBtn2" onclick="toggleRest(2)">休</button>
+        <input type="text" inputmode="numeric" id="addCount2" placeholder="0">
+        <span class="unit">人</span>
+      </div>
+      <div class="rest-row">
+        <span class="field-name">孙葳杰</span>
+        <button class="btn-rest" id="restBtn3" onclick="toggleRest(3)">休</button>
+        <input type="text" inputmode="numeric" id="addCount3" placeholder="0">
+        <span class="unit">人</span>
+      </div>
+    </div>
+
     <!-- 当日营业额总计 -->
     <div class="card">
       <div class="card-label"><span class="left"><span class="icon-dot"></span>当日营业额总计</span></div>
@@ -523,6 +619,13 @@
       refundEntries: [],
       weworkEntries: [],
       currentModal: null, // 'refund' | 'wework' | null
+      // 企业微信添加人数: [{name, isRest, count}, ...]
+      addMemberData: [
+        { name: '蒋濠', isRest: false, count: 0 },
+        { name: '薛梓彦', isRest: false, count: 0 },
+        { name: '张钦华', isRest: false, count: 0 },
+        { name: '孙葳杰', isRest: false, count: 0 },
+      ],
     };
 
     // ==================== Init ====================
@@ -716,6 +819,13 @@
       const weworkCount = state.weworkEntries.length;
       const totalAmount = document.getElementById('youzanAmount').value || '0.00';
 
+      // Sync add member counts before generating report
+      syncAddMemberCounts();
+
+      const addMemberLines = state.addMemberData.map(d => {
+        return `${d.name}添加企业微信人数：${d.isRest ? '休' : d.count}`;
+      }).join('\n');
+
       const text = `【广州永庆坊店 ${month}月${day}日 营业额】
 
 有赞收银金额：${youzanAmount} 元
@@ -729,6 +839,8 @@
 
 企业微信收款金额：${formatMoney(weworkTotal)} 元
 企微订单数：${weworkCount} 单
+
+${addMemberLines}
 
 当日营业额总计：${totalAmount} 元`;
 
@@ -760,6 +872,39 @@
         showToast('❌ 复制失败，请手动截图');
       }
       document.body.removeChild(textarea);
+    }
+
+    // ==================== 企业微信添加人数 ====================
+    function toggleRest(index) {
+      const data = state.addMemberData[index];
+      data.isRest = !data.isRest;
+
+      const btn = document.getElementById('restBtn' + index);
+      const input = document.getElementById('addCount' + index);
+
+      if (data.isRest) {
+        btn.textContent = '休 ✓';
+        btn.classList.add('active');
+        input.value = '';
+        input.disabled = true;
+        input.placeholder = '休息';
+      } else {
+        btn.textContent = '休';
+        btn.classList.remove('active');
+        input.disabled = false;
+        input.placeholder = '0';
+      }
+    }
+
+    // Sync add member count inputs to state
+    function syncAddMemberCounts() {
+      state.addMemberData.forEach((data, i) => {
+        if (!data.isRest) {
+          const input = document.getElementById('addCount' + i);
+          const val = parseInt(input.value, 10);
+          data.count = isNaN(val) || val < 0 ? 0 : val;
+        }
+      });
     }
 
     // ==================== Helpers ====================
