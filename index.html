@@ -550,6 +550,16 @@
       </div>
     </div>
 
+    <!-- 当日营业额总计 -->
+    <div class="card">
+      <div class="card-label"><span class="left"><span class="icon-dot"></span>当日营业额总计</span></div>
+      <div class="input-row">
+        <span class="field-name">总计</span>
+        <input type="text" id="totalAmount" value="0.00" readonly>
+        <span class="unit">元</span>
+      </div>
+    </div>
+
     <!-- 企业微信添加人数 -->
     <div class="card">
       <div class="card-label"><span class="left"><span class="icon-dot"></span>企业微信添加人数</span></div>
@@ -576,16 +586,6 @@
         <button class="btn-rest" id="restBtn3" onclick="toggleRest(3)">休</button>
         <input type="text" inputmode="numeric" id="addCount3" placeholder="0">
         <span class="unit">人</span>
-      </div>
-    </div>
-
-    <!-- 当日营业额总计 -->
-    <div class="card">
-      <div class="card-label"><span class="left"><span class="icon-dot"></span>当日营业额总计</span></div>
-      <div class="input-row">
-        <span class="field-name">总计</span>
-        <input type="text" id="totalAmount" value="0.00" readonly>
-        <span class="unit">元</span>
       </div>
     </div>
 
@@ -840,9 +840,9 @@
 企业微信收款金额：${formatMoney(weworkTotal)} 元
 企微订单数：${weworkCount} 单
 
-${addMemberLines}
+当日营业额总计：${totalAmount} 元
 
-当日营业额总计：${totalAmount} 元`;
+${addMemberLines}`;
 
       // Try clipboard API
       if (navigator.clipboard && navigator.clipboard.writeText) {
