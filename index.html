@@ -40,7 +40,33 @@
       font-weight: 600;
       color: #333;
       letter-spacing: 0.5px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 6px;
+      transition: background 0.2s;
+      display: inline-block;
     }
+    .header .store-name:hover { background: #f5f5f5; }
+    .header .store-name::after {
+      content: ' ✎';
+      font-size: 12px;
+      color: #ccc;
+      font-weight: 400;
+    }
+    .header .store-name-input {
+      font-size: 17px;
+      font-weight: 600;
+      color: #333;
+      letter-spacing: 0.5px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 4px 8px;
+      text-align: center;
+      outline: none;
+      background: #fff;
+      width: 200px;
+    }
+    .header .store-name-input:focus { border-color: #999; }
     .header .date {
       font-size: 13px;
       color: #999;
@@ -652,6 +678,7 @@
   <script>
     // ==================== State ====================
     const state = {
+      storeName: localStorage.getItem('report_storeName') || '广州永庆坊店',
       refundEntries: [],
       weworkEntries: [],
       currentModal: null, // 'refund' | 'wework' | null
@@ -666,6 +693,9 @@
       const day = now.getDate();
       document.getElementById('dateDisplay').textContent = month + '月' + day + '日 营业额';
 
+      // Store name
+      setupStoreName();
+
       // 有赞金额变化时，自动同步到当日营业额总计
       const youzanInput = document.getElementById('youzanAmount');
       youzanInput.addEventListener('input', syncTotalAmount);
@@ -675,6 +705,44 @@
       updateRefundDisplay();
       updateWeworkDisplay();
       renderAddMemberList();
+    }
+
+    function setupStoreName() {
+      const el = document.getElementById('storeName');
+      el.textContent = state.storeName;
+
+      el.addEventListener('click', function() {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'store-name-input';
+        input.value = state.storeName;
+        input.setAttribute('inputmode', 'text');
+
+        el.replaceWith(input);
+        input.focus();
+        input.select();
+
+        function save() {
+          const newName = input.value.trim();
+          if (newName) {
+            state.storeName = newName;
+            localStorage.setItem('report_storeName', newName);
+          }
+          const span = document.createElement('span');
+          span.id = 'storeName';
+          span.className = 'store-name';
+          span.textContent = state.storeName;
+          input.replaceWith(span);
+          setupStoreName();
+        }
+
+        input.addEventListener('blur', save);
+        input.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') {
+            input.blur();
+          }
+        });
+      });
     }
 
     function syncTotalAmount() {
@@ -857,7 +925,7 @@
         return `${d.name}添加企业微信人数：${d.isRest ? '休' : d.count}`;
       }).join('\n');
 
-      const text = `【广州永庆坊店 ${month}月${day}日 营业额】
+      const text = `【${state.storeName} ${month}月${day}日 营业额】
 
 有赞收银金额：${youzanAmount} 元
 有赞订单数：${youzanOrders} 单
@@ -914,13 +982,8 @@ ${addMemberLines}`;
           if (Array.isArray(data) && data.length > 0) return data;
         }
       } catch (e) {}
-      // 默认初始名单
-      return [
-        { name: '蒋濠', isRest: false, count: 0 },
-        { name: '薛梓彦', isRest: false, count: 0 },
-        { name: '张钦华', isRest: false, count: 0 },
-        { name: '孙葳杰', isRest: false, count: 0 },
-      ];
+      // 默认空名单
+      return [];
     }
 
     function saveAddMemberData() {
