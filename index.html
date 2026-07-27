@@ -491,6 +491,61 @@
       min-width: 24px;
       text-align: left;
     }
+    .member-delete {
+      width: 28px;
+      height: 28px;
+      border: none;
+      background: #f5f5f5;
+      border-radius: 50%;
+      font-size: 14px;
+      color: #bbb;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+    .member-delete:active { background: #ff5252; color: #fff; }
+
+    /* Add member row */
+    .add-member-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px dashed #e0e0e0;
+    }
+    .add-member-row input {
+      flex: 1;
+      height: 40px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 0 12px;
+      font-size: 14px;
+      color: #333;
+      outline: none;
+      background: #fafafa;
+      -webkit-user-select: text;
+      user-select: text;
+      -webkit-touch-callout: default;
+    }
+    .add-member-row input:focus { border-color: #999; background: #fff; }
+    .add-member-row input::placeholder { color: #ccc; }
+    .btn-add-member {
+      height: 40px;
+      padding: 0 16px;
+      border: none;
+      border-radius: 8px;
+      background: #555;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.2s;
+    }
+    .btn-add-member:active { background: #333; }
 
     /* Safe area for iPhone notch */
     @supports (padding-top: env(safe-area-inset-top)) {
@@ -563,29 +618,10 @@
     <!-- 企业微信添加人数 -->
     <div class="card">
       <div class="card-label"><span class="left"><span class="icon-dot"></span>企业微信添加人数</span></div>
-      <div class="rest-row">
-        <span class="field-name">蒋濠</span>
-        <button class="btn-rest" id="restBtn0" onclick="toggleRest(0)">休</button>
-        <input type="text" inputmode="numeric" id="addCount0" placeholder="0">
-        <span class="unit">人</span>
-      </div>
-      <div class="rest-row">
-        <span class="field-name">薛梓彦</span>
-        <button class="btn-rest" id="restBtn1" onclick="toggleRest(1)">休</button>
-        <input type="text" inputmode="numeric" id="addCount1" placeholder="0">
-        <span class="unit">人</span>
-      </div>
-      <div class="rest-row">
-        <span class="field-name">张钦华</span>
-        <button class="btn-rest" id="restBtn2" onclick="toggleRest(2)">休</button>
-        <input type="text" inputmode="numeric" id="addCount2" placeholder="0">
-        <span class="unit">人</span>
-      </div>
-      <div class="rest-row">
-        <span class="field-name">孙葳杰</span>
-        <button class="btn-rest" id="restBtn3" onclick="toggleRest(3)">休</button>
-        <input type="text" inputmode="numeric" id="addCount3" placeholder="0">
-        <span class="unit">人</span>
+      <div id="addMemberList"></div>
+      <div class="add-member-row">
+        <input type="text" id="newMemberName" placeholder="输入姓名" onkeydown="if(event.key==='Enter')addMember()">
+        <button class="btn-add-member" onclick="addMember()">添加</button>
       </div>
     </div>
 
@@ -619,13 +655,7 @@
       refundEntries: [],
       weworkEntries: [],
       currentModal: null, // 'refund' | 'wework' | null
-      // 企业微信添加人数: [{name, isRest, count}, ...]
-      addMemberData: [
-        { name: '蒋濠', isRest: false, count: 0 },
-        { name: '薛梓彦', isRest: false, count: 0 },
-        { name: '张钦华', isRest: false, count: 0 },
-        { name: '孙葳杰', isRest: false, count: 0 },
-      ],
+      addMemberData: loadAddMemberData(),
     };
 
     // ==================== Init ====================
@@ -644,6 +674,7 @@
       // Update displays
       updateRefundDisplay();
       updateWeworkDisplay();
+      renderAddMemberList();
     }
 
     function syncTotalAmount() {
@@ -875,12 +906,76 @@ ${addMemberLines}`;
     }
 
     // ==================== 企业微信添加人数 ====================
+    function loadAddMemberData() {
+      try {
+        const saved = localStorage.getItem('report_addMemberData');
+        if (saved) {
+          const data = JSON.parse(saved);
+          if (Array.isArray(data) && data.length > 0) return data;
+        }
+      } catch (e) {}
+      // 默认初始名单
+      return [
+        { name: '蒋濠', isRest: false, count: 0 },
+        { name: '薛梓彦', isRest: false, count: 0 },
+        { name: '张钦华', isRest: false, count: 0 },
+        { name: '孙葳杰', isRest: false, count: 0 },
+      ];
+    }
+
+    function saveAddMemberData() {
+      localStorage.setItem('report_addMemberData', JSON.stringify(state.addMemberData));
+    }
+
+    function renderAddMemberList() {
+      syncAddMemberCounts();
+      const container = document.getElementById('addMemberList');
+      let html = '';
+      state.addMemberData.forEach((d, i) => {
+        html += `<div class="rest-row">
+          <span class="field-name">${escapeHtml(d.name)}</span>
+          <button class="btn-rest${d.isRest ? ' active' : ''}" id="restBtn${i}" onclick="toggleRest(${i})">${d.isRest ? '休 ✓' : '休'}</button>
+          <input type="text" inputmode="numeric" id="addCount${i}" value="${d.isRest ? '' : (d.count || '')}" placeholder="${d.isRest ? '休息' : '0'}" ${d.isRest ? 'disabled' : ''}>
+          <span class="unit">人</span>
+          <button class="member-delete" onclick="deleteMember(${i})">✕</button>
+        </div>`;
+      });
+      container.innerHTML = html;
+    }
+
+    function addMember() {
+      const input = document.getElementById('newMemberName');
+      const name = input.value.trim();
+      if (!name) {
+        showToast('请输入姓名');
+        return;
+      }
+      // Check duplicate
+      if (state.addMemberData.some(d => d.name === name)) {
+        showToast('该姓名已存在');
+        return;
+      }
+      state.addMemberData.push({ name, isRest: false, count: 0 });
+      saveAddMemberData();
+      input.value = '';
+      renderAddMemberList();
+    }
+
+    function deleteMember(index) {
+      state.addMemberData.splice(index, 1);
+      saveAddMemberData();
+      renderAddMemberList();
+    }
+
     function toggleRest(index) {
       const data = state.addMemberData[index];
       data.isRest = !data.isRest;
+      data.count = 0;
+      saveAddMemberData();
 
       const btn = document.getElementById('restBtn' + index);
       const input = document.getElementById('addCount' + index);
+      if (!btn || !input) return;
 
       if (data.isRest) {
         btn.textContent = '休 ✓';
@@ -896,15 +991,22 @@ ${addMemberLines}`;
       }
     }
 
-    // Sync add member count inputs to state
     function syncAddMemberCounts() {
       state.addMemberData.forEach((data, i) => {
         if (!data.isRest) {
           const input = document.getElementById('addCount' + i);
-          const val = parseInt(input.value, 10);
-          data.count = isNaN(val) || val < 0 ? 0 : val;
+          if (input) {
+            const val = parseInt(input.value, 10);
+            data.count = isNaN(val) || val < 0 ? 0 : val;
+          }
         }
       });
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
     }
 
     // ==================== Helpers ====================
