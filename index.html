@@ -573,6 +573,60 @@
     }
     .btn-add-member:active { background: #333; }
 
+    /* Distribute row */
+    .distribute-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px dashed #e0e0e0;
+    }
+    .distribute-row .field-name {
+      font-size: 14px;
+      color: #777;
+      white-space: nowrap;
+      min-width: 56px;
+    }
+    .distribute-row input {
+      flex: 1;
+      height: 40px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 0 12px;
+      font-size: 15px;
+      color: #333;
+      outline: none;
+      transition: border-color 0.2s;
+      background: #fafafa;
+      text-align: right;
+      -webkit-user-select: text;
+      user-select: text;
+      -webkit-touch-callout: default;
+    }
+    .distribute-row input:focus { border-color: #999; background: #fff; }
+    .distribute-row input::placeholder { color: #ccc; }
+    .distribute-row .unit {
+      font-size: 14px;
+      color: #999;
+      min-width: 24px;
+      text-align: left;
+    }
+    .btn-distribute {
+      height: 40px;
+      padding: 0 14px;
+      border: none;
+      border-radius: 8px;
+      background: #2196f3;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.2s;
+    }
+    .btn-distribute:active { background: #1976d2; }
+
     /* Safe area for iPhone notch */
     @supports (padding-top: env(safe-area-inset-top)) {
       .header { padding-top: calc(16px + env(safe-area-inset-top)); }
@@ -645,6 +699,12 @@
     <div class="card">
       <div class="card-label"><span class="left"><span class="icon-dot"></span>企业微信添加人数</span></div>
       <div id="addMemberList"></div>
+      <div class="distribute-row">
+        <span class="field-name">总数量</span>
+        <input type="text" inputmode="numeric" id="totalAddCount" placeholder="0" onkeydown="if(event.key==='Enter')autoDistribute()">
+        <span class="unit">人</span>
+        <button class="btn-distribute" onclick="autoDistribute()">随机分配</button>
+      </div>
       <div class="add-member-row">
         <input type="text" id="newMemberName" placeholder="输入姓名" onkeydown="if(event.key==='Enter')addMember()">
         <button class="btn-add-member" onclick="addMember()">添加</button>
@@ -679,6 +739,7 @@
     // ==================== State ====================
     const state = {
       storeName: localStorage.getItem('report_storeName') || '广州永庆坊店',
+      totalAddCount: parseInt(localStorage.getItem('report_totalAddCount'), 10) || 0,
       refundEntries: [],
       weworkEntries: [],
       currentModal: null, // 'refund' | 'wework' | null
@@ -705,6 +766,11 @@
       updateRefundDisplay();
       updateWeworkDisplay();
       renderAddMemberList();
+
+      // Restore total add count
+      if (state.totalAddCount > 0) {
+        document.getElementById('totalAddCount').value = state.totalAddCount;
+      }
     }
 
     function setupStoreName() {
@@ -991,14 +1057,13 @@ ${addMemberLines}`;
     }
 
     function renderAddMemberList() {
-      syncAddMemberCounts();
       const container = document.getElementById('addMemberList');
       let html = '';
       state.addMemberData.forEach((d, i) => {
         html += `<div class="rest-row">
           <span class="field-name">${escapeHtml(d.name)}</span>
           <button class="btn-rest${d.isRest ? ' active' : ''}" id="restBtn${i}" onclick="toggleRest(${i})">${d.isRest ? '休 ✓' : '休'}</button>
-          <input type="text" inputmode="numeric" id="addCount${i}" value="${d.isRest ? '' : (d.count || '')}" placeholder="${d.isRest ? '休息' : '0'}" ${d.isRest ? 'disabled' : ''}>
+          <input type="text" inputmode="numeric" id="addCount${i}" value="${d.isRest ? '' : (d.count || '')}" placeholder="${d.isRest ? '休息' : '0'}" ${d.isRest ? 'disabled' : ''} onblur="saveCount(${i})">
           <span class="unit">人</span>
           <button class="member-delete" onclick="deleteMember(${i})">✕</button>
         </div>`;
@@ -1018,6 +1083,7 @@ ${addMemberLines}`;
         showToast('该姓名已存在');
         return;
       }
+      syncAddMemberCounts();
       state.addMemberData.push({ name, isRest: false, count: 0 });
       saveAddMemberData();
       input.value = '';
@@ -1025,9 +1091,52 @@ ${addMemberLines}`;
     }
 
     function deleteMember(index) {
+      syncAddMemberCounts();
       state.addMemberData.splice(index, 1);
       saveAddMemberData();
       renderAddMemberList();
+    }
+
+    function autoDistribute() {
+      const totalInput = document.getElementById('totalAddCount');
+      const total = parseInt(totalInput.value, 10);
+      if (isNaN(total) || total <= 0) {
+        showToast('请输入有效的总数量');
+        return;
+      }
+
+      // 先同步当前输入框的值到 state
+      syncAddMemberCounts();
+
+      // 筛选当天未休息的人员
+      const activeMembers = state.addMemberData.filter(d => !d.isRest);
+      if (activeMembers.length === 0) {
+        showToast('没有可分配的人员（当天都休息）');
+        return;
+      }
+
+      // 随机分配：把 total 个名额随机分给未休息的人（保证整数且总和等于 total）
+      const counts = new Array(activeMembers.length).fill(0);
+      for (let i = 0; i < total; i++) {
+        const idx = Math.floor(Math.random() * activeMembers.length);
+        counts[idx]++;
+      }
+
+      // 写回 state
+      let activeIdx = 0;
+      state.addMemberData.forEach(d => {
+        if (!d.isRest) {
+          d.count = counts[activeIdx++];
+        }
+      });
+
+      // 保存总数量
+      state.totalAddCount = total;
+      localStorage.setItem('report_totalAddCount', String(total));
+
+      saveAddMemberData();
+      renderAddMemberList();
+      showToast('✅ 已随机分配 ' + total + ' 人');
     }
 
     function toggleRest(index) {
@@ -1052,6 +1161,16 @@ ${addMemberLines}`;
         input.disabled = false;
         input.placeholder = '0';
       }
+    }
+
+    function saveCount(index) {
+      const data = state.addMemberData[index];
+      if (!data || data.isRest) return;
+      const input = document.getElementById('addCount' + index);
+      if (!input) return;
+      const val = parseInt(input.value, 10);
+      data.count = isNaN(val) || val < 0 ? 0 : val;
+      saveAddMemberData();
     }
 
     function syncAddMemberCounts() {
