@@ -124,6 +124,7 @@
     }
     .input-row input {
       flex: 1;
+      min-width: 0;
       height: 40px;
       border: 1px solid #e0e0e0;
       border-radius: 8px;
@@ -378,6 +379,7 @@
     }
     .add-row input {
       flex: 1;
+      min-width: 0;
       height: 44px;
       border: 1px solid #e0e0e0;
       border-radius: 10px;
@@ -456,18 +458,23 @@
       display: flex;
       align-items: center;
       margin-bottom: 10px;
-      gap: 8px;
+      gap: 6px;
     }
     .rest-row:last-child { margin-bottom: 0; }
     .rest-row .field-name {
       font-size: 14px;
       color: #777;
       white-space: nowrap;
-      min-width: 56px;
+      min-width: 48px;
+      max-width: 64px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex-shrink: 0;
     }
     .btn-rest {
       height: 40px;
-      padding: 0 14px;
+      width: 52px;
+      padding: 0;
       border: 1.5px solid #e0e0e0;
       border-radius: 8px;
       background: #fafafa;
@@ -478,6 +485,9 @@
       white-space: nowrap;
       transition: all 0.2s;
       flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     .btn-rest.active {
       background: #ff9800;
@@ -488,6 +498,7 @@
     .btn-rest:active { transform: scale(0.96); }
     .rest-row input {
       flex: 1;
+      min-width: 0;
       height: 40px;
       border: 1px solid #e0e0e0;
       border-radius: 8px;
@@ -514,8 +525,9 @@
     .rest-row .unit {
       font-size: 14px;
       color: #999;
-      min-width: 24px;
+      min-width: 20px;
       text-align: left;
+      flex-shrink: 0;
     }
     .member-delete {
       width: 28px;
@@ -544,6 +556,7 @@
     }
     .add-member-row input {
       flex: 1;
+      min-width: 0;
       height: 40px;
       border: 1px solid #e0e0e0;
       border-radius: 8px;
@@ -560,7 +573,7 @@
     .add-member-row input::placeholder { color: #ccc; }
     .btn-add-member {
       height: 40px;
-      padding: 0 16px;
+      padding: 0 14px;
       border: none;
       border-radius: 8px;
       background: #555;
@@ -570,6 +583,7 @@
       cursor: pointer;
       white-space: nowrap;
       transition: background 0.2s;
+      flex-shrink: 0;
     }
     .btn-add-member:active { background: #333; }
 
@@ -586,10 +600,12 @@
       font-size: 14px;
       color: #777;
       white-space: nowrap;
-      min-width: 56px;
+      min-width: 48px;
+      flex-shrink: 0;
     }
     .distribute-row input {
       flex: 1;
+      min-width: 0;
       height: 40px;
       border: 1px solid #e0e0e0;
       border-radius: 8px;
@@ -609,12 +625,13 @@
     .distribute-row .unit {
       font-size: 14px;
       color: #999;
-      min-width: 24px;
+      min-width: 20px;
       text-align: left;
+      flex-shrink: 0;
     }
     .btn-distribute {
       height: 40px;
-      padding: 0 14px;
+      padding: 0 12px;
       border: none;
       border-radius: 8px;
       background: #2196f3;
@@ -624,6 +641,7 @@
       cursor: pointer;
       white-space: nowrap;
       transition: background 0.2s;
+      flex-shrink: 0;
     }
     .btn-distribute:active { background: #1976d2; }
 
