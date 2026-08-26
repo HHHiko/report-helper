@@ -1020,10 +1020,10 @@
       // 同步业绩输入
       syncSalesInputs();
 
-      // 销售达成率（跳过休息人员）
+      // 销售达成率（休息人员显示"休"）
       const salesLines = state.sales.persons
-        .filter(p => !p.isRest)
         .map(p => {
+          if (p.isRest) return `${p.name}：休`;
           const t = state.targets.persons[p.name];
           return `${p.name}：\n日目标:${t ? t : '未设置'} 完成率：${computeRate(p.sales, t)}`;
         })
