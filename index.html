@@ -618,6 +618,179 @@
     }
     .btn-target-set:active { background: #ddd; }
 
+    /* ========== Target Modal: Tabs / Day Chips / Import ========== */
+    .target-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .target-tab {
+      flex: 1;
+      min-width: 0;
+      height: 36px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      background: #fafafa;
+      color: #999;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .target-tab.active {
+      background: #555;
+      border-color: #555;
+      color: #fff;
+      font-weight: 600;
+    }
+    .ym-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .ym-arrow {
+      width: 34px;
+      height: 30px;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      background: #fff;
+      color: #666;
+      font-size: 12px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .ym-arrow:active { background: #f0f0f0; }
+    .ym-label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #333;
+    }
+    .day-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-bottom: 12px;
+    }
+    .day-chip {
+      width: 34px;
+      height: 30px;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      background: #fff;
+      color: #666;
+      font-size: 12px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .day-chip.today { border-color: #ff9800; color: #ff9800; }
+    .day-chip.sel { background: #555; border-color: #555; color: #fff; font-weight: 600; }
+    .section-hint {
+      margin: 14px 0 8px;
+      font-size: 13px;
+      color: #999;
+    }
+    .section-hint-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 14px 0 8px;
+      font-size: 13px;
+      color: #999;
+    }
+    .btn-apply-month {
+      height: 26px;
+      padding: 0 10px;
+      border: none;
+      border-radius: 6px;
+      background: #f0f0f0;
+      color: #666;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .btn-apply-month:active { background: #ddd; }
+    .import-text {
+      width: 100%;
+      min-height: 130px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 13px;
+      color: #333;
+      outline: none;
+      resize: vertical;
+      box-sizing: border-box;
+      font-family: inherit;
+      background: #fafafa;
+      -webkit-user-select: text;
+      user-select: text;
+      -webkit-touch-callout: default;
+    }
+    .import-text:focus { border-color: #999; background: #fff; }
+    .btn-parse {
+      width: 100%;
+      height: 40px;
+      border: none;
+      border-radius: 8px;
+      background: #555;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    .btn-parse:active { background: #333; }
+    .import-preview { margin-top: 10px; }
+    .preview-count {
+      font-size: 13px;
+      color: #4caf50;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .preview-list {
+      max-height: 190px;
+      overflow-y: auto;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      padding: 6px 10px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .preview-row {
+      font-size: 12px;
+      color: #333;
+      padding: 3px 0;
+      border-bottom: 1px dashed #f0f0f0;
+      word-break: break-all;
+    }
+    .preview-row:last-child { border-bottom: none; }
+    .preview-date { color: #555; font-weight: 700; margin-right: 6px; }
+    .preview-warn {
+      margin-top: 8px;
+      padding: 8px 10px;
+      background: #fff7e6;
+      border: 1px solid #ffd591;
+      border-radius: 8px;
+      color: #ad6800;
+      font-size: 12px;
+      word-break: break-all;
+    }
+    .btn-save-import {
+      width: 100%;
+      height: 44px;
+      border: none;
+      border-radius: 10px;
+      background: #07c160;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 12px;
+    }
+    .btn-save-import:active { background: #06a854; }
+    .btn-save-import:disabled { background: #ccc; cursor: default; }
+
     /* Safe area for iPhone notch */
     @supports (padding-top: env(safe-area-inset-top)) {
       .header { padding-top: calc(16px + env(safe-area-inset-top)); }
@@ -732,6 +905,11 @@
       currentModal: null, // 'refund' | 'wework' | 'target' | null
       sales: loadSales(),       // { date, persons: [{name, isRest, sales}] }
       targets: getTodayTargets(), // { shop, persons: {name: target} }
+      targetTab: 'day',          // 目标设置弹层：'day' 按天设置 | 'import' 批量导入
+      targetSel: (() => { const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() + 1, d: n.getDate() }; })(),
+      importYM: (() => { const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() + 1 }; })(),
+      importText: '',
+      importPreview: null,       // parseTargetTable 的解析结果
     };
 
     // ==================== Init ====================
@@ -811,6 +989,7 @@
         title.textContent = '企业微信收款明细';
       } else {
         title.textContent = '目标设置';
+        state.targetTab = 'day';
       }
 
       renderModalBody();
@@ -838,19 +1017,10 @@
       } else if (state.currentModal === 'wework') {
         updateWeworkDisplay();
       } else if (state.currentModal === 'target') {
-        // 收集目标输入
-        const shopVal = document.getElementById('shopTargetInput').value.trim();
-        const persons = {};
-        state.sales.persons.forEach((p, i) => {
-          const input = document.getElementById('personTargetInput' + i);
-          if (input) {
-            const v = input.value.trim();
-            if (v) persons[p.name] = v;
-          }
-        });
-        saveTodayTargets({ shop: shopVal, persons });
-        renderSalesList();
-        showToast('✅ 目标已保存');
+        if (state.targetTab === 'day') {
+          const saved = autoSaveDayInputs();
+          if (saved) showToast('✅ 已保存 ' + state.targetSel.m + '月' + state.targetSel.d + '日 目标');
+        }
       }
       closeModalDirect();
     }
@@ -911,21 +1081,58 @@
 
     function renderTargetModalBody() {
       const body = document.getElementById('modalBody');
-      let html = '';
+      if (state.targetTab === 'import') {
+        renderImportTab(body);
+        return;
+      }
+      renderDayTab(body);
+    }
 
+    function targetTabsHtml(active) {
+      return `<div class="target-tabs">
+        <button class="target-tab${active === 'day' ? ' active' : ''}" onclick="switchTargetTab('day')">按天设置</button>
+        <button class="target-tab${active === 'import' ? ' active' : ''}" onclick="switchTargetTab('import')">批量导入</button>
+      </div>`;
+    }
+
+    function switchTargetTab(tab) {
+      if (tab === 'import' && state.targetTab === 'day') autoSaveDayInputs();
+      state.targetTab = tab;
+      renderTargetModalBody();
+    }
+
+    function renderDayTab(body) {
+      const sel = state.targetSel;
+      const dayTargets = loadTargetsAll()[dateKeyOf(sel.y, sel.m, sel.d)] || { shop: '', persons: {} };
+      const days = daysInMonth(sel.y, sel.m);
+      const now = new Date();
+      const isCurMonth = sel.y === now.getFullYear() && sel.m === now.getMonth() + 1;
+
+      let html = targetTabsHtml('day');
+      html += `<div class="ym-nav">
+        <button class="ym-arrow" onclick="targetMonthShift(-1)">◀</button>
+        <span class="ym-label">${sel.y}年${sel.m}月</span>
+        <button class="ym-arrow" onclick="targetMonthShift(1)">▶</button>
+      </div>`;
+      html += '<div class="day-chips">';
+      for (let d = 1; d <= days; d++) {
+        const isSel = d === sel.d;
+        const isToday = isCurMonth && d === now.getDate();
+        html += `<button class="day-chip${isSel ? ' sel' : ''}${isToday ? ' today' : ''}" onclick="selectTargetDay(${d})">${d}</button>`;
+      }
+      html += '</div>';
       html += `<div class="input-row">
         <span class="field-name">店铺日目标</span>
-        <input type="text" inputmode="numeric" id="shopTargetInput" value="${state.targets.shop || ''}" placeholder="0">
+        <input type="text" inputmode="numeric" id="shopTargetInput" value="${dayTargets.shop || ''}" placeholder="0">
         <span class="unit">元</span>
       </div>`;
-
-      html += '<div style="margin:14px 0 8px;font-size:13px;color:#999;">个人日目标</div>';
+      html += '<div class="section-hint-row"><span>个人日目标</span><button class="btn-apply-month" onclick="applyPersonTargetsToMonth()">应用到整月</button></div>';
 
       if (state.sales.persons.length === 0) {
         html += '<div class="empty-hint">暂无人员，请关闭后在卡片底部添加</div>';
       } else {
         state.sales.persons.forEach((p, i) => {
-          const t = state.targets.persons[p.name] || '';
+          const t = dayTargets.persons[p.name] || '';
           html += `<div class="input-row">
             <span class="field-name">${escapeHtml(p.name)}</span>
             <input type="text" inputmode="numeric" id="personTargetInput${i}" value="${escapeHtml(t)}" placeholder="0">
@@ -935,6 +1142,164 @@
       }
 
       body.innerHTML = html;
+    }
+
+    function targetMonthShift(dir) {
+      autoSaveDayInputs();
+      let { y, m } = state.targetSel;
+      m += dir;
+      if (m < 1) { m = 12; y--; }
+      if (m > 12) { m = 1; y++; }
+      const now = new Date();
+      const d = (y === now.getFullYear() && m === now.getMonth() + 1) ? now.getDate() : 1;
+      state.targetSel = { y, m, d };
+      renderTargetModalBody();
+    }
+
+    function selectTargetDay(d) {
+      autoSaveDayInputs();
+      state.targetSel.d = d;
+      renderTargetModalBody();
+    }
+
+    // 收集弹层当前日期的输入并保存；无任何输入则不写
+    function autoSaveDayInputs() {
+      const shopInput = document.getElementById('shopTargetInput');
+      if (!shopInput) return false;
+      const shop = shopInput.value.trim();
+      const persons = {};
+      let has = !!shop;
+      state.sales.persons.forEach((p, i) => {
+        const input = document.getElementById('personTargetInput' + i);
+        if (input) {
+          const v = input.value.trim();
+          if (v) { persons[p.name] = v; has = true; }
+        }
+      });
+      if (!has) return false;
+      const key = dateKeyOf(state.targetSel.y, state.targetSel.m, state.targetSel.d);
+      saveDayTargets(key, { shop, persons });
+      if (key === dateKey()) {
+        state.targets = { shop, persons };
+        renderSalesList();
+      }
+      return true;
+    }
+
+    // 把当前个人日目标输入复制到所选月份每天（店铺目标不动）
+    function applyPersonTargetsToMonth() {
+      const persons = {};
+      let has = false;
+      state.sales.persons.forEach((p, i) => {
+        const input = document.getElementById('personTargetInput' + i);
+        if (input) {
+          const v = input.value.trim();
+          if (v) { persons[p.name] = v; has = true; }
+        }
+      });
+      if (!has) { showToast('请先填写个人日目标'); return; }
+      const { y, m } = state.targetSel;
+      const all = loadTargetsAll();
+      const days = daysInMonth(y, m);
+      for (let d = 1; d <= days; d++) {
+        const key = dateKeyOf(y, m, d);
+        const t = all[key] || { shop: '', persons: {} };
+        t.persons = Object.assign({}, t.persons, persons);
+        all[key] = t;
+      }
+      const keys = Object.keys(all).sort();
+      while (keys.length > 90) { delete all[keys.shift()]; }
+      localStorage.setItem('report_targets', JSON.stringify(all));
+      const todayKey = dateKey();
+      if (all[todayKey]) {
+        state.targets = all[todayKey];
+        renderSalesList();
+      }
+      showToast('✅ 个人目标已应用到 ' + m + '月每天');
+    }
+
+    function importMonthShift(dir) {
+      const text = document.getElementById('importText');
+      if (text) state.importText = text.value;
+      let { y, m } = state.importYM;
+      m += dir;
+      if (m < 1) { m = 12; y--; }
+      if (m > 12) { m = 1; y++; }
+      state.importYM = { y, m };
+      state.importPreview = null;
+      renderTargetModalBody();
+    }
+
+    function renderImportTab(body) {
+      const ym = state.importYM;
+      let html = targetTabsHtml('import');
+      html += `<div class="ym-nav">
+        <button class="ym-arrow" onclick="importMonthShift(-1)">◀</button>
+        <span class="ym-label">${ym.y}年${ym.m}月</span>
+        <button class="ym-arrow" onclick="importMonthShift(1)">▶</button>
+      </div>`;
+      html += '<div class="section-hint">在 Excel 中选中整月目标表（含表头），复制后粘贴到下面：</div>';
+      html += `<textarea id="importText" class="import-text" placeholder="日期\t店铺目标\t蒋濠\t薛梓彦&#10;8月1日\t13333\t2666\t2666&#10;8月2日\t13333\t2666\t2666">${escapeHtml(state.importText)}</textarea>`;
+      html += '<button class="btn-parse" onclick="parseImport()">解析并预览</button>';
+      html += '<div id="importPreview" class="import-preview"></div>';
+      html += '<button class="btn-save-import" id="btnSaveImport" onclick="saveImport()" disabled>确认保存</button>';
+      body.innerHTML = html;
+      if (state.importPreview) renderImportPreview();
+    }
+
+    function parseImport() {
+      const text = document.getElementById('importText').value;
+      state.importText = text;
+      state.importPreview = parseTargetTable(text, state.importYM.y, state.importYM.m);
+      renderImportPreview();
+      const btn = document.getElementById('btnSaveImport');
+      if (btn) btn.disabled = Object.keys(state.importPreview.byDate).length === 0;
+    }
+
+    function renderImportPreview() {
+      const box = document.getElementById('importPreview');
+      if (!box || !state.importPreview) return;
+      const r = state.importPreview;
+      const keys = Object.keys(r.byDate).sort();
+      let html = '';
+      if (keys.length === 0) {
+        html = '<div class="empty-hint">未解析出有效数据，请检查表格内容</div>';
+      } else {
+        html += `<div class="preview-count">✅ 解析出 ${keys.length} 天目标</div>`;
+        html += '<div class="preview-list">';
+        keys.forEach(k => {
+          const t = r.byDate[k];
+          const [, m, d] = k.split('-');
+          const persons = Object.entries(t.persons).map(([n, v]) => `${escapeHtml(n)}${escapeHtml(String(v))}`).join('｜');
+          html += `<div class="preview-row"><span class="preview-date">${parseInt(m)}/${parseInt(d)}</span>${t.shop ? `店铺${escapeHtml(String(t.shop))}` : ''}${persons ? (t.shop ? '｜' : '') + persons : ''}</div>`;
+        });
+        html += '</div>';
+      }
+      r.warnings.forEach(w => {
+        html += `<div class="preview-warn">⚠ ${escapeHtml(w)}</div>`;
+      });
+      box.innerHTML = html;
+    }
+
+    function saveImport() {
+      const r = state.importPreview;
+      if (!r || Object.keys(r.byDate).length === 0) return;
+      const all = loadTargetsAll();
+      Object.keys(r.byDate).forEach(k => { all[k] = r.byDate[k]; });
+      const keys = Object.keys(all).sort();
+      while (keys.length > 90) { delete all[keys.shift()]; }
+      localStorage.setItem('report_targets', JSON.stringify(all));
+      const today = dateKey();
+      if (r.byDate[today]) {
+        state.targets = r.byDate[today];
+        renderSalesList();
+      }
+      showToast('✅ 已导入 ' + Object.keys(r.byDate).length + ' 天目标');
+      state.importPreview = null;
+      const btn = document.getElementById('btnSaveImport');
+      if (btn) btn.disabled = true;
+      const box = document.getElementById('importPreview');
+      if (box) box.innerHTML = '';
     }
 
     // ==================== Entry CRUD ====================
@@ -1117,23 +1482,152 @@ ${salesLines}`;
     }
 
     function getTodayTargets() {
+      // 严格按日期匹配：当天有数据就用当天的，没有则视为未设置（不继承）
       const all = loadTargetsAll();
-      const today = dateKey();
-      if (all[today]) return all[today];
-      // 今天没保存过目标：继承最近一次保存的目标
-      const keys = Object.keys(all).filter(k => k < today).sort();
-      if (keys.length > 0) return all[keys[keys.length - 1]];
-      return { shop: '', persons: {} };
+      return all[dateKey()] || { shop: '', persons: {} };
     }
 
-    function saveTodayTargets(newTargets) {
+    function dateKeyOf(y, m, d) {
+      return y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+    }
+
+    function daysInMonth(y, m) {
+      return new Date(y, m, 0).getDate();
+    }
+
+    function saveDayTargets(dateStr, newTargets) {
       const all = loadTargetsAll();
-      all[dateKey()] = newTargets;
-      // 只保留最近 40 天的目标记录
+      all[dateStr] = newTargets;
+      // 保留最近 90 天（支持月底提前导入下月整月数据）
       const keys = Object.keys(all).sort();
-      while (keys.length > 40) { delete all[keys.shift()]; }
+      while (keys.length > 90) { delete all[keys.shift()]; }
       localStorage.setItem('report_targets', JSON.stringify(all));
-      state.targets = newTargets;
+    }
+
+    // ==================== 月度目标表解析 ====================
+    // 支持两种布局（自动识别）：
+    //   A 行=日期，列=人员：首行表头（日期/店铺目标/人名...），每行首格为日期
+    //   B 行=人员，列=日期：首行表头（人员/1号/2号...），每行首格为人名（含"店铺目标"行）
+    function parseTargetTable(text, year, month) {
+      const warnings = [];
+      const byDate = {};
+      const personNames = new Set(state.sales.persons.map(p => p.name));
+      const IGNORE_RE = /合计|备注|说明|平均|占比/;
+      const SHOP_RE = /店|总/;
+      const NAME_RE = /^[一-龥·]{2,6}$/;
+      const unmatchedNames = [];
+
+      const warnUnmatched = (name) => {
+        if (!unmatchedNames.includes(name)) unmatchedNames.push(name);
+      };
+      const finalizeUnmatched = () => {
+        if (unmatchedNames.length > 0) {
+          warnings.push('以下名字不在人员名单（目标已保存，添加人员后自动生效）：' + unmatchedNames.join('、'));
+        }
+      };
+
+      const rows = text.split(/\r?\n/).map(r => r.trim()).filter(r => r);
+      if (rows.length < 2) {
+        return { byDate, warnings: ['内容太短：请粘贴含表头的完整表格（至少两行）'] };
+      }
+      const splitCells = row => row.includes('\t')
+        ? row.split('\t').map(c => c.trim())
+        : row.split(/[,，]/).map(c => c.trim());
+
+      const firstCells = splitCells(rows[0]);
+      const headerRest = firstCells.slice(1).filter(c => c);
+
+      // 布局识别：表头首格之后出现 ≥2 个日期格 → 布局 B
+      const layoutB = headerRest.filter(c => parseDateCell(c, year, month) !== null).length >= 2;
+
+      const setVal = (key, type, name, v) => {
+        if (v === null) return;
+        if (!byDate[key]) byDate[key] = { shop: '', persons: {} };
+        if (type === 'shop') byDate[key].shop = String(v);
+        else byDate[key].persons[name] = String(v);
+      };
+
+      if (layoutB) {
+        // ===== 布局 B：行=人员，列=日期 =====
+        const headerDates = firstCells.slice(1).map(c => parseDateCell(c, year, month));
+        rows.slice(1).forEach((row, ri) => {
+          const cells = splitCells(row);
+          const name = cells[0] || '';
+          if (!name || IGNORE_RE.test(name)) return;
+          const isShop = SHOP_RE.test(name) && !personNames.has(name);
+          if (!isShop && !personNames.has(name) && !NAME_RE.test(name)) {
+            warnings.push('第' + (ri + 2) + '行「' + name + '」无法识别，已跳过');
+            return;
+          }
+          if (!isShop && !personNames.has(name)) warnUnmatched(name);
+          cells.slice(1).forEach((c, ci) => {
+            const d = headerDates[ci];
+            if (!d || !c) return;
+            const key = dateKeyOf(d.y, d.m, d.d);
+            setVal(key, isShop ? 'shop' : 'person', name, cleanNum(c));
+          });
+        });
+      } else {
+        // ===== 布局 A：行=日期，列=人员 =====
+        if (parseDateCell(firstCells[0], year, month) !== null) {
+          return { byDate, warnings: ['未识别到表头行：请连同表头（第一行：日期 + 店铺目标 + 人名）一起复制'] };
+        }
+        const colMap = headerRest.map(cell => {
+          if (IGNORE_RE.test(cell)) return null;
+          if (personNames.has(cell)) return { type: 'person', name: cell };
+          if (SHOP_RE.test(cell)) return { type: 'shop' };
+          if (NAME_RE.test(cell)) {
+            warnUnmatched(cell);
+            return { type: 'person', name: cell };
+          }
+          return null;
+        });
+        rows.slice(1).forEach((row, ri) => {
+          const cells = splitCells(row);
+          const d = parseDateCell(cells[0] || '', year, month);
+          if (!d) {
+            warnings.push('第' + (ri + 2) + '行日期无法识别「' + (cells[0] || '') + '」，已跳过');
+            return;
+          }
+          const key = dateKeyOf(d.y, d.m, d.d);
+          cells.slice(1).forEach((c, ci) => {
+            const col = colMap[ci];
+            if (!col || !c) return;
+            setVal(key, col.type, col.name, cleanNum(c));
+          });
+        });
+      }
+
+      finalizeUnmatched();
+      return { byDate, warnings };
+    }
+
+    // 解析日期格：支持 8月1日 / 2026/8/1 / 8-1 / 8.1 / 1 / 1号
+    function parseDateCell(cell, year, month) {
+      if (!cell) return null;
+      const ok = (y, m, d) => (m >= 1 && m <= 12 && d >= 1 && d <= 31) ? { y, m, d } : null;
+      let m = cell.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日?$/);
+      if (m) return ok(+m[1], +m[2], +m[3]);
+      m = cell.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+      if (m) return ok(+m[1], +m[2], +m[3]);
+      m = cell.match(/^(\d{1,2})月(\d{1,2})日?$/);
+      if (m) return ok(year, +m[1], +m[2]);
+      m = cell.match(/^(\d{1,2})[-/](\d{1,2})$/);
+      if (m) return ok(year, +m[1], +m[2]);
+      m = cell.match(/^(\d{1,2})\.(\d{1,2})$/);
+      if (m) return ok(year, +m[1], +m[2]);
+      m = cell.match(/^(\d{1,2})[日号]?$/);
+      if (m) return ok(year, month, +m[1]);
+      return null;
+    }
+
+    // 清洗数值：去"元/，/空格"后 parseFloat；空 → null
+    function cleanNum(cell) {
+      if (typeof cell !== 'string') return null;
+      const s = cell.replace(/[元,\s，]/g, '').trim();
+      if (!s) return null;
+      const n = parseFloat(s);
+      return isNaN(n) ? null : n;
     }
 
     function computeRate(sales, target) {
