@@ -711,6 +711,15 @@
       flex-shrink: 0;
     }
     .btn-apply-month:active { background: #ddd; }
+    .apply-hint {
+      margin: 4px 0 8px;
+      font-size: 12px;
+      color: #bbb;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .apply-hint.warn { color: #ad6800; white-space: normal; }
     .import-text {
       width: 100%;
       min-height: 130px;
@@ -1131,14 +1140,19 @@
       if (state.sales.persons.length === 0) {
         html += '<div class="empty-hint">暂无人员，请关闭后在卡片底部添加</div>';
       } else {
-        state.sales.persons.forEach((p, i) => {
-          const t = dayTargets.persons[p.name] || '';
-          html += `<div class="input-row">
-            <span class="field-name">${escapeHtml(p.name)}</span>
-            <input type="text" inputmode="numeric" id="personTargetInput${i}" value="${escapeHtml(t)}" placeholder="0">
-            <span class="unit">元</span>
-          </div>`;
-        });
+        // 每人目标相同：只输入一次，保存时自动分给所有人
+        const names = state.sales.persons.map(p => p.name);
+        const vals = names.map(n => dayTargets.persons[n]).filter(v => v);
+        const allEqual = vals.length === names.length && vals.every(v => v === vals[0]);
+        html += `<div class="input-row">
+          <span class="field-name">每人目标</span>
+          <input type="text" inputmode="numeric" id="personTargetAllInput" value="${escapeHtml(allEqual ? vals[0] : '')}" placeholder="每人相同">
+          <span class="unit">元</span>
+        </div>`;
+        html += `<div class="apply-hint">应用于 ${names.length} 人：${escapeHtml(names.join('、'))}</div>`;
+        if (!allEqual && vals.length > 0) {
+          html += '<div class="apply-hint warn">⚠ 该天各人目标不同，保存后将统一为上方数值</div>';
+        }
       }
 
       body.innerHTML = html;
@@ -1169,13 +1183,14 @@
       const shop = shopInput.value.trim();
       const persons = {};
       let has = !!shop;
-      state.sales.persons.forEach((p, i) => {
-        const input = document.getElementById('personTargetInput' + i);
-        if (input) {
-          const v = input.value.trim();
-          if (v) { persons[p.name] = v; has = true; }
+      const allInput = document.getElementById('personTargetAllInput');
+      if (allInput) {
+        const v = allInput.value.trim();
+        if (v) {
+          state.sales.persons.forEach(p => { persons[p.name] = v; });
+          has = true;
         }
-      });
+      }
       if (!has) return false;
       const key = dateKeyOf(state.targetSel.y, state.targetSel.m, state.targetSel.d);
       saveDayTargets(key, { shop, persons });
@@ -1189,15 +1204,10 @@
     // 把当前个人日目标输入复制到所选月份每天（店铺目标不动）
     function applyPersonTargetsToMonth() {
       const persons = {};
-      let has = false;
-      state.sales.persons.forEach((p, i) => {
-        const input = document.getElementById('personTargetInput' + i);
-        if (input) {
-          const v = input.value.trim();
-          if (v) { persons[p.name] = v; has = true; }
-        }
-      });
-      if (!has) { showToast('请先填写个人日目标'); return; }
+      const allInput = document.getElementById('personTargetAllInput');
+      const v = allInput ? allInput.value.trim() : '';
+      if (!v) { showToast('请先填写个人日目标'); return; }
+      state.sales.persons.forEach(p => { persons[p.name] = v; });
       const { y, m } = state.targetSel;
       const all = loadTargetsAll();
       const days = daysInMonth(y, m);
