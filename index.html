@@ -1029,32 +1029,30 @@
         })
         .join('\n');
 
-      // 店铺合计
-      const shopSales = state.sales.persons
-        .filter(p => !p.isRest)
-        .reduce((sum, p) => sum + (parseFloat(p.sales) || 0), 0);
+      // 店铺今日完成率 = 当日营业额总计 ÷ 今日目标
       const shopTarget = state.targets.shop;
-      const shopLine = `店铺：\n日目标:${shopTarget ? shopTarget : '未设置'} 完成率：${computeRate(shopSales, shopTarget)}`;
+      // 金额为 0 时显示 "0"，非 0 保留两位小数
+      const fmtMoney = v => (v === 0 ? '0' : formatMoney(v));
 
-      const text = `【${state.storeName} ${month}月${day}日 营业额】
+      const text = `【${state.storeName}  ${month}月${day}日营业额】
 
-有赞收银金额：${youzanAmount} 元
-有赞订单数：${youzanOrders} 单
+有赞收银金额：${youzanAmount}元
+有赞订单数：${youzanOrders}单
 
-现金收银金额：0.00 元
-现金笔数：0 笔
+现金收银金额：0元
+现金笔数：0笔
 
-退款金额：${formatMoney(refundTotal)} 元
-退款订单数：${refundCount} 单
+退款金额：${fmtMoney(refundTotal)}元
+退款订单数：${refundCount}单
 
-企业微信收款金额：${formatMoney(weworkTotal)} 元
-企微订单数：${weworkCount} 单
+企业微信收款金额：${fmtMoney(weworkTotal)}元
+企微订单数：${weworkCount}单
 
-当日营业额总计：${totalAmount} 元
+当日营业额总计：${totalAmount}元
+今日目标：${shopTarget ? shopTarget : '未设置'}
+今日完成率：${computeRate(totalAmount, shopTarget)}
 
-${salesLines}
-
-${shopLine}`;
+${salesLines}`;
 
       // Try clipboard API
       if (navigator.clipboard && navigator.clipboard.writeText) {
