@@ -121,6 +121,10 @@
       color: #777;
       white-space: nowrap;
       min-width: 56px;
+      max-width: 80px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex-shrink: 0;
     }
     .input-row input {
       flex: 1;
@@ -587,63 +591,32 @@
     }
     .btn-add-member:active { background: #333; }
 
-    /* Distribute row */
-    .distribute-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-top: 14px;
-      padding-top: 14px;
-      border-top: 1px dashed #e0e0e0;
-    }
-    .distribute-row .field-name {
+    /* Rate badge */
+    .rate-badge {
       font-size: 14px;
-      color: #777;
-      white-space: nowrap;
+      font-weight: 700;
       min-width: 48px;
-      flex-shrink: 0;
-    }
-    .distribute-row input {
-      flex: 1;
-      min-width: 0;
-      height: 40px;
-      border: 1px solid #e0e0e0;
-      border-radius: 8px;
-      padding: 0 12px;
-      font-size: 15px;
-      color: #333;
-      outline: none;
-      transition: border-color 0.2s;
-      background: #fafafa;
       text-align: right;
-      -webkit-user-select: text;
-      user-select: text;
-      -webkit-touch-callout: default;
-    }
-    .distribute-row input:focus { border-color: #999; background: #fff; }
-    .distribute-row input::placeholder { color: #ccc; }
-    .distribute-row .unit {
-      font-size: 14px;
+      flex-shrink: 0;
       color: #999;
-      min-width: 20px;
-      text-align: left;
-      flex-shrink: 0;
     }
-    .btn-distribute {
-      height: 40px;
-      padding: 0 12px;
+    .rate-badge.hit { color: #4caf50; }
+
+    /* Target setting button in card label */
+    .btn-target-set {
+      height: 28px;
+      padding: 0 10px;
       border: none;
-      border-radius: 8px;
-      background: #2196f3;
-      color: #fff;
-      font-size: 14px;
-      font-weight: 600;
+      border-radius: 6px;
+      background: #f0f0f0;
+      color: #666;
+      font-size: 12px;
+      font-weight: 500;
       cursor: pointer;
-      white-space: nowrap;
-      transition: background 0.2s;
       flex-shrink: 0;
+      transition: background 0.2s;
     }
-    .btn-distribute:active { background: #1976d2; }
+    .btn-target-set:active { background: #ddd; }
 
     /* Safe area for iPhone notch */
     @supports (padding-top: env(safe-area-inset-top)) {
@@ -713,19 +686,16 @@
       </div>
     </div>
 
-    <!-- 企业微信添加人数 -->
+    <!-- 销售达成率 -->
     <div class="card">
-      <div class="card-label"><span class="left"><span class="icon-dot"></span>企业微信添加人数</span></div>
-      <div id="addMemberList"></div>
-      <div class="distribute-row">
-        <span class="field-name">总数量</span>
-        <input type="text" inputmode="numeric" id="totalAddCount" placeholder="0" onkeydown="if(event.key==='Enter')autoDistribute()">
-        <span class="unit">人</span>
-        <button class="btn-distribute" onclick="autoDistribute()">随机分配</button>
+      <div class="card-label">
+        <span class="left"><span class="icon-dot"></span>销售达成率</span>
+        <button class="btn-target-set" onclick="openModal('target')">⚙ 目标设置</button>
       </div>
+      <div id="salesList"></div>
       <div class="add-member-row">
-        <input type="text" id="newMemberName" placeholder="输入姓名" onkeydown="if(event.key==='Enter')addMember()">
-        <button class="btn-add-member" onclick="addMember()">添加</button>
+        <input type="text" id="newPersonName" placeholder="输入姓名" onkeydown="if(event.key==='Enter')addPerson()">
+        <button class="btn-add-member" onclick="addPerson()">添加</button>
       </div>
     </div>
 
@@ -757,11 +727,11 @@
     // ==================== State ====================
     const state = {
       storeName: localStorage.getItem('report_storeName') || '广州永庆坊店',
-      totalAddCount: parseInt(localStorage.getItem('report_totalAddCount'), 10) || 0,
       refundEntries: [],
       weworkEntries: [],
-      currentModal: null, // 'refund' | 'wework' | null
-      addMemberData: loadAddMemberData(),
+      currentModal: null, // 'refund' | 'wework' | 'target' | null
+      sales: loadSales(),       // { date, persons: [{name, isRest, sales}] }
+      targets: getTodayTargets(), // { shop, persons: {name: target} }
     };
 
     // ==================== Init ====================
@@ -783,12 +753,7 @@
       // Update displays
       updateRefundDisplay();
       updateWeworkDisplay();
-      renderAddMemberList();
-
-      // Restore total add count
-      if (state.totalAddCount > 0) {
-        document.getElementById('totalAddCount').value = state.totalAddCount;
-      }
+      renderSalesList();
     }
 
     function setupStoreName() {
@@ -842,8 +807,10 @@
 
       if (type === 'refund') {
         title.textContent = '退款明细';
-      } else {
+      } else if (type === 'wework') {
         title.textContent = '企业微信收款明细';
+      } else {
+        title.textContent = '目标设置';
       }
 
       renderModalBody();
@@ -870,6 +837,20 @@
         updateRefundDisplay();
       } else if (state.currentModal === 'wework') {
         updateWeworkDisplay();
+      } else if (state.currentModal === 'target') {
+        // 收集目标输入
+        const shopVal = document.getElementById('shopTargetInput').value.trim();
+        const persons = {};
+        state.sales.persons.forEach((p, i) => {
+          const input = document.getElementById('personTargetInput' + i);
+          if (input) {
+            const v = input.value.trim();
+            if (v) persons[p.name] = v;
+          }
+        });
+        saveTodayTargets({ shop: shopVal, persons });
+        renderSalesList();
+        showToast('✅ 目标已保存');
       }
       closeModalDirect();
     }
@@ -877,6 +858,12 @@
     // ==================== Modal Body Rendering ====================
     function renderModalBody() {
       const body = document.getElementById('modalBody');
+
+      if (state.currentModal === 'target') {
+        renderTargetModalBody();
+        return;
+      }
+
       const entries = state.currentModal === 'refund' ? state.refundEntries : state.weworkEntries;
       const type = state.currentModal;
 
@@ -918,6 +905,34 @@
           <button class="btn-add" onclick="addEntry()">添加</button>
         </div>
       `;
+
+      body.innerHTML = html;
+    }
+
+    function renderTargetModalBody() {
+      const body = document.getElementById('modalBody');
+      let html = '';
+
+      html += `<div class="input-row">
+        <span class="field-name">店铺日目标</span>
+        <input type="text" inputmode="numeric" id="shopTargetInput" value="${state.targets.shop || ''}" placeholder="0">
+        <span class="unit">元</span>
+      </div>`;
+
+      html += '<div style="margin:14px 0 8px;font-size:13px;color:#999;">个人日目标</div>';
+
+      if (state.sales.persons.length === 0) {
+        html += '<div class="empty-hint">暂无人员，请关闭后在卡片底部添加</div>';
+      } else {
+        state.sales.persons.forEach((p, i) => {
+          const t = state.targets.persons[p.name] || '';
+          html += `<div class="input-row">
+            <span class="field-name">${escapeHtml(p.name)}</span>
+            <input type="text" inputmode="numeric" id="personTargetInput${i}" value="${escapeHtml(t)}" placeholder="0">
+            <span class="unit">元</span>
+          </div>`;
+        });
+      }
 
       body.innerHTML = html;
     }
@@ -1002,12 +1017,24 @@
       const weworkCount = state.weworkEntries.length;
       const totalAmount = document.getElementById('youzanAmount').value || '0.00';
 
-      // Sync add member counts before generating report
-      syncAddMemberCounts();
+      // 同步业绩输入
+      syncSalesInputs();
 
-      const addMemberLines = state.addMemberData.map(d => {
-        return `${d.name}添加企业微信人数：${d.isRest ? '休' : d.count}`;
-      }).join('\n');
+      // 销售达成率（跳过休息人员）
+      const salesLines = state.sales.persons
+        .filter(p => !p.isRest)
+        .map(p => {
+          const t = state.targets.persons[p.name];
+          return `${p.name}：\n日目标:${t ? t : '未设置'} 完成率：${computeRate(p.sales, t)}`;
+        })
+        .join('\n');
+
+      // 店铺合计
+      const shopSales = state.sales.persons
+        .filter(p => !p.isRest)
+        .reduce((sum, p) => sum + (parseFloat(p.sales) || 0), 0);
+      const shopTarget = state.targets.shop;
+      const shopLine = `店铺：\n日目标:${shopTarget ? shopTarget : '未设置'} 完成率：${computeRate(shopSales, shopTarget)}`;
 
       const text = `【${state.storeName} ${month}月${day}日 营业额】
 
@@ -1025,7 +1052,9 @@
 
 当日营业额总计：${totalAmount} 元
 
-${addMemberLines}`;
+${salesLines}
+
+${shopLine}`;
 
       // Try clipboard API
       if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -1057,150 +1086,166 @@ ${addMemberLines}`;
       document.body.removeChild(textarea);
     }
 
-    // ==================== 企业微信添加人数 ====================
-    function loadAddMemberData() {
+    // ==================== 销售达成率 ====================
+    function dateKey() {
+      const now = new Date();
+      return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    }
+
+    function loadSales() {
+      const today = dateKey();
       try {
-        const saved = localStorage.getItem('report_addMemberData');
-        if (saved) {
-          const data = JSON.parse(saved);
-          if (Array.isArray(data) && data.length > 0) return data;
+        const saved = JSON.parse(localStorage.getItem('report_sales'));
+        if (saved && Array.isArray(saved.persons)) {
+          if (saved.date === today) return saved;
+          // 跨天：继承人员名单，业绩清空、休息状态重置
+          return {
+            date: today,
+            persons: saved.persons.map(p => ({ name: p.name, isRest: false, sales: '' })),
+          };
         }
       } catch (e) {}
-      // 默认空名单
-      return [];
+      return { date: today, persons: [] };
     }
 
-    function saveAddMemberData() {
-      localStorage.setItem('report_addMemberData', JSON.stringify(state.addMemberData));
+    function saveSales() {
+      localStorage.setItem('report_sales', JSON.stringify(state.sales));
     }
 
-    function renderAddMemberList() {
-      const container = document.getElementById('addMemberList');
+    function loadTargetsAll() {
+      try {
+        return JSON.parse(localStorage.getItem('report_targets')) || {};
+      } catch (e) { return {}; }
+    }
+
+    function getTodayTargets() {
+      const all = loadTargetsAll();
+      const today = dateKey();
+      if (all[today]) return all[today];
+      // 今天没保存过目标：继承最近一次保存的目标
+      const keys = Object.keys(all).filter(k => k < today).sort();
+      if (keys.length > 0) return all[keys[keys.length - 1]];
+      return { shop: '', persons: {} };
+    }
+
+    function saveTodayTargets(newTargets) {
+      const all = loadTargetsAll();
+      all[dateKey()] = newTargets;
+      // 只保留最近 40 天的目标记录
+      const keys = Object.keys(all).sort();
+      while (keys.length > 40) { delete all[keys.shift()]; }
+      localStorage.setItem('report_targets', JSON.stringify(all));
+      state.targets = newTargets;
+    }
+
+    function computeRate(sales, target) {
+      const t = parseFloat(target);
+      if (!t || t <= 0) return '--';
+      const s = parseFloat(sales);
+      if (isNaN(s)) return '--';
+      return Math.round(s / t * 100) + '%';
+    }
+
+    function renderSalesList() {
+      syncSalesInputs();
+      const container = document.getElementById('salesList');
       let html = '';
-      state.addMemberData.forEach((d, i) => {
+      state.sales.persons.forEach((p, i) => {
+        const target = state.targets.persons[p.name];
+        const rate = p.isRest ? '' : computeRate(p.sales, target);
+        const hit = !p.isRest && parseFloat(target) > 0 && parseFloat(p.sales) >= parseFloat(target);
         html += `<div class="rest-row">
-          <span class="field-name">${escapeHtml(d.name)}</span>
-          <button class="btn-rest${d.isRest ? ' active' : ''}" id="restBtn${i}" onclick="toggleRest(${i})">${d.isRest ? '休 ✓' : '休'}</button>
-          <input type="text" inputmode="numeric" id="addCount${i}" value="${d.isRest ? '' : (d.count || '')}" placeholder="${d.isRest ? '休息' : '0'}" ${d.isRest ? 'disabled' : ''} onblur="saveCount(${i})">
-          <span class="unit">人</span>
-          <button class="member-delete" onclick="deleteMember(${i})">✕</button>
+          <span class="field-name">${escapeHtml(p.name)}</span>
+          <button class="btn-rest${p.isRest ? ' active' : ''}" id="restBtn${i}" onclick="toggleRest(${i})">${p.isRest ? '休 ✓' : '休'}</button>
+          <input type="text" inputmode="decimal" id="salesInput${i}" value="${p.isRest ? '' : p.sales}" placeholder="${p.isRest ? '休息' : '业绩'}" ${p.isRest ? 'disabled' : ''} onblur="saveSalesVal(${i})" oninput="updateRateDisplay(${i})">
+          <span class="rate-badge${hit ? ' hit' : ''}" id="rateBadge${i}">${rate}</span>
+          <button class="member-delete" onclick="deletePerson(${i})">✕</button>
         </div>`;
       });
       container.innerHTML = html;
     }
 
-    function addMember() {
-      const input = document.getElementById('newMemberName');
+    function syncSalesInputs() {
+      state.sales.persons.forEach((p, i) => {
+        if (p.isRest) return;
+        const input = document.getElementById('salesInput' + i);
+        if (input) p.sales = input.value.trim();
+      });
+    }
+
+    function updateRateDisplay(index) {
+      const p = state.sales.persons[index];
+      if (!p || p.isRest) return;
+      const input = document.getElementById('salesInput' + index);
+      const badge = document.getElementById('rateBadge' + index);
+      if (!badge) return;
+      const target = parseFloat(state.targets.persons[p.name]);
+      const rate = computeRate(input ? input.value : p.sales, target);
+      badge.textContent = rate;
+      const hit = target > 0 && parseFloat(input.value) >= target;
+      if (hit) badge.classList.add('hit'); else badge.classList.remove('hit');
+    }
+
+    function saveSalesVal(index) {
+      const p = state.sales.persons[index];
+      if (!p || p.isRest) return;
+      const input = document.getElementById('salesInput' + index);
+      if (!input) return;
+      p.sales = input.value.trim();
+      saveSales();
+      updateRateDisplay(index);
+    }
+
+    function addPerson() {
+      const input = document.getElementById('newPersonName');
       const name = input.value.trim();
       if (!name) {
         showToast('请输入姓名');
         return;
       }
-      // Check duplicate
-      if (state.addMemberData.some(d => d.name === name)) {
+      if (state.sales.persons.some(p => p.name === name)) {
         showToast('该姓名已存在');
         return;
       }
-      syncAddMemberCounts();
-      state.addMemberData.push({ name, isRest: false, count: 0 });
-      saveAddMemberData();
+      syncSalesInputs();
+      state.sales.persons.push({ name, isRest: false, sales: '' });
+      saveSales();
       input.value = '';
-      renderAddMemberList();
+      renderSalesList();
     }
 
-    function deleteMember(index) {
-      syncAddMemberCounts();
-      state.addMemberData.splice(index, 1);
-      saveAddMemberData();
-      renderAddMemberList();
-    }
-
-    function autoDistribute() {
-      const totalInput = document.getElementById('totalAddCount');
-      const total = parseInt(totalInput.value, 10);
-      if (isNaN(total) || total <= 0) {
-        showToast('请输入有效的总数量');
-        return;
-      }
-
-      // 先同步当前输入框的值到 state
-      syncAddMemberCounts();
-
-      // 筛选当天未休息的人员
-      const activeMembers = state.addMemberData.filter(d => !d.isRest);
-      if (activeMembers.length === 0) {
-        showToast('没有可分配的人员（当天都休息）');
-        return;
-      }
-
-      // 随机分配：把 total 个名额随机分给未休息的人（保证整数且总和等于 total）
-      const counts = new Array(activeMembers.length).fill(0);
-      for (let i = 0; i < total; i++) {
-        const idx = Math.floor(Math.random() * activeMembers.length);
-        counts[idx]++;
-      }
-
-      // 写回 state
-      let activeIdx = 0;
-      state.addMemberData.forEach(d => {
-        if (!d.isRest) {
-          d.count = counts[activeIdx++];
-        }
-      });
-
-      // 保存总数量
-      state.totalAddCount = total;
-      localStorage.setItem('report_totalAddCount', String(total));
-
-      saveAddMemberData();
-      renderAddMemberList();
-      showToast('✅ 已随机分配 ' + total + ' 人');
+    function deletePerson(index) {
+      syncSalesInputs();
+      state.sales.persons.splice(index, 1);
+      saveSales();
+      renderSalesList();
     }
 
     function toggleRest(index) {
-      const data = state.addMemberData[index];
-      data.isRest = !data.isRest;
-      data.count = 0;
-      saveAddMemberData();
+      const p = state.sales.persons[index];
+      p.isRest = !p.isRest;
+      p.sales = '';
+      saveSales();
 
       const btn = document.getElementById('restBtn' + index);
-      const input = document.getElementById('addCount' + index);
-      if (!btn || !input) return;
+      const input = document.getElementById('salesInput' + index);
+      const badge = document.getElementById('rateBadge' + index);
 
-      if (data.isRest) {
+      if (p.isRest) {
         btn.textContent = '休 ✓';
         btn.classList.add('active');
         input.value = '';
         input.disabled = true;
         input.placeholder = '休息';
+        badge.textContent = '';
+        badge.classList.remove('hit');
       } else {
         btn.textContent = '休';
         btn.classList.remove('active');
         input.disabled = false;
-        input.placeholder = '0';
+        input.placeholder = '业绩';
+        updateRateDisplay(index);
       }
-    }
-
-    function saveCount(index) {
-      const data = state.addMemberData[index];
-      if (!data || data.isRest) return;
-      const input = document.getElementById('addCount' + index);
-      if (!input) return;
-      const val = parseInt(input.value, 10);
-      data.count = isNaN(val) || val < 0 ? 0 : val;
-      saveAddMemberData();
-    }
-
-    function syncAddMemberCounts() {
-      state.addMemberData.forEach((data, i) => {
-        if (!data.isRest) {
-          const input = document.getElementById('addCount' + i);
-          if (input) {
-            const val = parseInt(input.value, 10);
-            data.count = isNaN(val) || val < 0 ? 0 : val;
-          }
-        }
-      });
     }
 
     function escapeHtml(str) {
