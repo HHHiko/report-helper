@@ -764,6 +764,28 @@
       margin-top: 4px;
     }
     .btn-cloud:active { background: #2e63d4; }
+    .mode-switch {
+      display: flex;
+      margin-top: 10px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .mode-btn {
+      flex: 1;
+      height: 32px;
+      border: none;
+      background: #fafafa;
+      color: #888;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .mode-btn.active { background: #555; color: #fff; font-weight: 600; }
+    .preview-info {
+      font-size: 12px;
+      color: #999;
+      margin-bottom: 6px;
+    }
     .import-preview { margin-top: 10px; }
     .preview-count {
       font-size: 13px;
@@ -931,7 +953,8 @@
       targetSel: (() => { const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() + 1, d: n.getDate() }; })(),
       importYM: (() => { const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() + 1 }; })(),
       importText: '',
-      importPreview: null,       // parseTargetTable 的解析结果
+      importPreview: null,       // parseTargetTable / parseRawTable 的解析结果
+      importMode: localStorage.getItem('report_import_mode') || 'std', // 'std' 标准表 | 'raw' 原始表(第3/8列)
     };
 
     // ==================== Init ====================
@@ -1266,8 +1289,15 @@
       </div>`;
       html += '<div class="section-hint">方式一：把整月目标表截图发给 Claude 生成云端目标，点下面按钮同步：</div>';
       html += '<button class="btn-cloud" onclick="syncCloudTargets(true)">☁ 同步云端目标</button>';
-      html += '<div class="section-hint">方式二：在 Excel 中选中整月目标表（含表头），复制后粘贴到下面：</div>';
-      html += `<textarea id="importText" class="import-text" placeholder="日期\t店铺目标\t蒋濠\t薛梓彦&#10;8月1日\t13333\t2666\t2666&#10;8月2日\t13333\t2666\t2666">${escapeHtml(state.importText)}</textarea>`;
+      html += '<div class="section-hint">方式二：在 Excel 中复制整月目标表，粘贴到下面解析：</div>';
+      html += `<div class="mode-switch">
+        <button class="mode-btn${state.importMode === 'std' ? ' active' : ''}" onclick="switchImportMode('std')">标准表</button>
+        <button class="mode-btn${state.importMode === 'raw' ? ' active' : ''}" onclick="switchImportMode('raw')">原始表（第3/8列）</button>
+      </div>`;
+      const importPlaceholder = state.importMode === 'raw'
+        ? '直接粘贴整张原始表：&#10;· 日期列自动识别（如 8月1日 / 8.1 / 1日）&#10;· 第3列 = 店铺日目标&#10;· 第8列 = 个人目标（自动分给每位销售）'
+        : '日期\t店铺目标\t蒋濠\t薛梓彦&#10;8月1日\t13333\t2666\t2666&#10;8月2日\t13333\t2666\t2666';
+      html += `<textarea id="importText" class="import-text" placeholder="${importPlaceholder}">${escapeHtml(state.importText)}</textarea>`;
       html += '<button class="btn-parse" onclick="parseImport()">解析并预览</button>';
       html += '<div id="importPreview" class="import-preview"></div>';
       html += '<button class="btn-save-import" id="btnSaveImport" onclick="saveImport()" disabled>确认保存</button>';
@@ -1278,10 +1308,20 @@
     function parseImport() {
       const text = document.getElementById('importText').value;
       state.importText = text;
-      state.importPreview = parseTargetTable(text, state.importYM.y, state.importYM.m);
+      state.importPreview = state.importMode === 'raw'
+        ? parseRawTable(text, state.importYM.y, state.importYM.m)
+        : parseTargetTable(text, state.importYM.y, state.importYM.m);
       renderImportPreview();
       const btn = document.getElementById('btnSaveImport');
       if (btn) btn.disabled = Object.keys(state.importPreview.byDate).length === 0;
+    }
+
+    function switchImportMode(mode) {
+      if (state.importMode === mode) return;
+      state.importMode = mode;
+      localStorage.setItem('report_import_mode', mode);
+      state.importPreview = null; // 模式变了，旧预览作废
+      renderImportTab(document.getElementById('modalBody'));
     }
 
     function renderImportPreview() {
@@ -1294,6 +1334,9 @@
         html = '<div class="empty-hint">未解析出有效数据，请检查表格内容</div>';
       } else {
         html += `<div class="preview-count">✅ 解析出 ${keys.length} 天目标</div>`;
+        if (r.dateCol !== undefined) {
+          html += `<div class="preview-info">日期列：第${r.dateCol + 1}列｜第3列=店铺目标｜第8列=个人目标</div>`;
+        }
         html += '<div class="preview-list">';
         keys.forEach(k => {
           const t = r.byDate[k];
@@ -1681,6 +1724,61 @@ ${salesLines}`;
 
       finalizeUnmatched();
       return { byDate, warnings };
+    }
+
+    // ===== 原始表解析：自动找日期列，第3列=店铺日目标，第8列=个人目标 =====
+    function parseRawTable(text, year, month) {
+      const warnings = [];
+      const byDate = {};
+      const names = state.sales.persons.map(p => p.name);
+      const rows = text.split(/\r?\n/).map(r => r.trim()).filter(r => r);
+      if (rows.length < 2) {
+        return { byDate, warnings: ['内容太短：请粘贴含表头的完整表格（至少两行）'] };
+      }
+      const splitCells = row => row.includes('\t')
+        ? row.split('\t').map(c => c.trim())
+        : row.split(/[,，]/).map(c => c.trim());
+      const grid = rows.map(splitCells);
+      const width = grid.reduce((m, r) => Math.max(m, r.length), 0);
+
+      // 1) 自动识别日期列：各列中能解析为日期的格数最多的那一列
+      let dateCol = -1, best = 0;
+      for (let c = 0; c < width; c++) {
+        let cnt = 0;
+        grid.forEach(r => { if (c < r.length && parseDateCell(r[c], year, month) !== null) cnt++; });
+        if (cnt > best) { best = cnt; dateCol = c; }
+      }
+      if (best < 2) {
+        return { byDate, warnings: ['未找到日期列：请确认表格含日期（如 8月1日 / 8/1 / 1日），并选对年月'] };
+      }
+
+      // 2) 逐行：日期列→日期，第3列(索引2)→店铺日目标，第8列(索引7)→个人目标
+      let skipped = 0;
+      grid.forEach((cells, ri) => {
+        const d = parseDateCell(cells[dateCol] || '', year, month);
+        if (!d) {
+          // 日期无法识别（如合并单元格导致为空）：第3/8列有数字则提示
+          if (cleanNum(cells[2]) !== null || cleanNum(cells[7]) !== null) skipped++;
+          return;
+        }
+        const shop = cleanNum(cells[2]);
+        const person = cleanNum(cells[7]);
+        if (shop === null && person === null) return;
+        const key = dateKeyOf(d.y, d.m, d.d);
+        if (!byDate[key]) byDate[key] = { shop: '', persons: {} };
+        if (shop !== null) byDate[key].shop = String(shop);
+        if (person !== null) names.forEach(n => { byDate[key].persons[n] = String(person); });
+      });
+      if (skipped > 0) {
+        warnings.push(skipped + ' 行日期无法识别或为空（可能是合并单元格），已跳过');
+      }
+      if (names.length === 0) {
+        warnings.push('人员名单为空：个人目标未分配，请先添加人员再导入');
+      }
+      if (Object.keys(byDate).length === 0) {
+        return { byDate, warnings: warnings.concat(['未解析出目标数据：请确认第3列为店铺目标、第8列为个人目标']) };
+      }
+      return { byDate, warnings, dateCol };
     }
 
     // 解析日期格：支持 8月1日 / 2026/8/1 / 8-1 / 8.1 / 1 / 1号
