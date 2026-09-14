@@ -720,6 +720,12 @@
       white-space: nowrap;
     }
     .apply-hint.warn { color: #ad6800; white-space: normal; }
+    .carry-hint {
+      margin: 8px 0 6px;
+      font-size: 12px;
+      color: #ad6800;
+      word-break: break-all;
+    }
     .import-text {
       width: 100%;
       min-height: 130px;
@@ -934,8 +940,8 @@
       refundEntries: [],
       weworkEntries: [],
       currentModal: null, // 'refund' | 'wework' | 'target' | null
-      sales: loadSales(),       // { date, persons: [{name, isRest, sales}] }
-      targets: getTodayTargets(), // { shop, persons: {name: target} }
+      sales: loadSales(),       // { date, shop, persons: [{name, isRest, sales}] }
+      targets: getTodayEffTargets(), // 生效目标（计划 + 追补）
       targetTab: 'day',          // 目标设置弹层：'day' 按天设置 | 'import' 批量导入
       targetSel: (() => { const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() + 1, d: n.getDate() }; })(),
       importYM: (() => { const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() + 1 }; })(),
@@ -955,9 +961,14 @@
       // Store name
       setupStoreName();
 
-      // 有赞金额变化时，自动同步到当日营业额总计
+      // 有赞金额：同天回填；变化时同步到当日营业额总计并持久化（跨天结算用）
       const youzanInput = document.getElementById('youzanAmount');
-      youzanInput.addEventListener('input', syncTotalAmount);
+      if (state.sales.shop) youzanInput.value = state.sales.shop;
+      youzanInput.addEventListener('input', function() {
+        state.sales.shop = youzanInput.value.trim();
+        saveSales();
+        syncTotalAmount();
+      });
       syncTotalAmount();
 
       // Update displays
@@ -1218,7 +1229,7 @@
       const key = dateKeyOf(state.targetSel.y, state.targetSel.m, state.targetSel.d);
       saveDayTargets(key, { shop, persons });
       if (key === dateKey()) {
-        state.targets = { shop, persons };
+        state.targets = getTodayEffTargets();
         renderSalesList();
       }
       return true;
@@ -1245,7 +1256,7 @@
       localStorage.setItem('report_targets', JSON.stringify(all));
       const todayKey = dateKey();
       if (all[todayKey]) {
-        state.targets = all[todayKey];
+        state.targets = getTodayEffTargets();
         renderSalesList();
       }
       showToast('✅ 个人目标已应用到 ' + m + '月每天');
@@ -1344,7 +1355,7 @@
       localStorage.setItem('report_targets', JSON.stringify(all));
       const today = dateKey();
       if (r.byDate[today]) {
-        state.targets = r.byDate[today];
+        state.targets = getTodayEffTargets();
         renderSalesList();
       }
       showToast('✅ 已导入 ' + Object.keys(r.byDate).length + ' 天目标');
@@ -1437,6 +1448,8 @@
 
       // 同步业绩输入
       syncSalesInputs();
+      // 先结算当天差额（生成明天的追补），报表再按生效目标输出
+      settleFromState();
 
       // 销售达成率（休息人员显示"休"）
       const salesLines = state.sales.persons
@@ -1513,19 +1526,119 @@ ${salesLines}`;
       try {
         const saved = JSON.parse(localStorage.getItem('report_sales'));
         if (saved && Array.isArray(saved.persons)) {
-          if (saved.date === today) return saved;
-          // 跨天：继承人员名单，业绩清空、休息状态重置
+          if (saved.date === today) {
+            return { date: today, shop: saved.shop || '', persons: saved.persons };
+          }
+          // 跨天：归档昨日数据并自动结算追补差额，再继承人员名单、业绩清空、休息状态重置
+          archiveAndSettle(saved);
           return {
             date: today,
+            shop: '',
             persons: saved.persons.map(p => ({ name: p.name, isRest: false, sales: '' })),
           };
         }
       } catch (e) {}
-      return { date: today, persons: [] };
+      return { date: today, shop: '', persons: [] };
     }
 
     function saveSales() {
       localStorage.setItem('report_sales', JSON.stringify(state.sales));
+    }
+
+    // ==================== 差额追补 ====================
+    // 总部要求：当天目标没达成的，差额加到后面去（同月内滚动，每月清零）
+    function loadCarry() {
+      try { return JSON.parse(localStorage.getItem('report_carry')) || null; } catch (e) { return null; }
+    }
+
+    function loadHistory() {
+      try { return JSON.parse(localStorage.getItem('report_history')) || {}; } catch (e) { return {}; }
+    }
+
+    // 追补仅对结算日之后的日期生效，且同年同月内滚动（每月 1 号清零）
+    function carryAppliesTo(carry, dateStr) {
+      return !!(carry && carry.date && carry.date < dateStr && carry.date.slice(0, 7) === dateStr.slice(0, 7));
+    }
+
+    function fmtNum(v) {
+      return String(Math.round(v * 100) / 100);
+    }
+
+    // 生效目标 = 计划目标 + 挂起追补。店铺无计划 → 未设置（追补继续挂起）；
+    // 个人无计划但有追补 → 单独显示追补（必须补完）
+    function getTodayEffTargets() {
+      const plan = getTodayTargets();
+      const carry = loadCarry();
+      if (!carry || !carryAppliesTo(carry, dateKey())) return plan;
+      const eff = { shop: '', persons: {} };
+      if (plan.shop) {
+        eff.shop = fmtNum(parseFloat(plan.shop) + (carry.shop || 0));
+      }
+      const names = new Set();
+      Object.keys(plan.persons).forEach(n => names.add(n));
+      Object.keys(carry.persons || {}).forEach(n => names.add(n));
+      names.forEach(n => {
+        const planV = plan.persons[n];
+        const carryV = (carry.persons || {})[n] || 0;
+        if (!planV && !carryV) return;
+        eff.persons[n] = planV ? fmtNum(parseFloat(planV) + carryV) : fmtNum(carryV);
+      });
+      return eff;
+    }
+
+    // 结算某天：差额 = 生效目标 − 实际，>0 部分挂起（覆盖式，差额链自动滚动）。
+    // 当天重复结算（复制多次/跨天归档）时，回退用上一次结算前的旧差额作基数，避免重复叠加。
+    // 休息人员与无计划人员：差额保持原样挂起。
+    function settleDay(dateStr, shopActualStr, personsArr) {
+      const carry = loadCarry();
+      const prev = (carry && carry.date === dateStr) ? (carry.prev || null) : carry;
+      const prevApplies = carryAppliesTo(prev, dateStr);
+      const plan = loadTargetsAll()[dateStr] || { shop: '', persons: {} };
+      const shopActual = parseFloat(shopActualStr);
+
+      let shopCarry = prev && prev.shop ? prev.shop : 0;
+      if (plan.shop) {
+        const base = parseFloat(plan.shop) + (prevApplies ? shopCarry : 0);
+        const short = base - (isNaN(shopActual) ? 0 : shopActual);
+        shopCarry = Math.max(0, Math.round(short * 100) / 100);
+      }
+
+      const personsCarry = {};
+      const names = new Set();
+      Object.keys(plan.persons).forEach(n => names.add(n));
+      if (prev) Object.keys(prev.persons || {}).forEach(n => names.add(n));
+      names.forEach(n => {
+        const p = (personsArr || []).find(x => x.name === n);
+        let v = prev && prev.persons ? (prev.persons[n] || 0) : 0;
+        if (p && p.isRest) { personsCarry[n] = v; return; } // 休息：差额挂起不变
+        if (plan.persons[n]) {
+          const base = parseFloat(plan.persons[n]) + (prevApplies ? v : 0);
+          const actual = p && p.sales !== '' ? parseFloat(p.sales) : 0;
+          const short = base - (isNaN(actual) ? 0 : actual);
+          v = Math.max(0, Math.round(short * 100) / 100);
+        }
+        personsCarry[n] = v;
+      });
+      const prevStored = prev ? { date: prev.date, shop: prev.shop, persons: prev.persons } : undefined;
+      localStorage.setItem('report_carry', JSON.stringify({ date: dateStr, shop: shopCarry, persons: personsCarry, prev: prevStored }));
+    }
+
+    // 复制报表时结算当天（同天重复结算 = 覆盖，取最新数据）
+    function settleFromState() {
+      const youzan = document.getElementById('youzanAmount').value || '0';
+      settleDay(dateKey(), youzan, state.sales.persons);
+    }
+
+    // 跨天：昨天数据归档进历史（90 天），并结算昨天的差额
+    function archiveAndSettle(saved) {
+      const hist = loadHistory();
+      const persons = {};
+      saved.persons.forEach(p => { if (!p.isRest && p.sales !== '') persons[p.name] = String(p.sales); });
+      hist[saved.date] = { shop: saved.shop || '0', persons };
+      const keys = Object.keys(hist).sort();
+      while (keys.length > 90) { delete hist[keys.shift()]; }
+      localStorage.setItem('report_history', JSON.stringify(hist));
+      settleDay(saved.date, saved.shop || '0', saved.persons);
     }
 
     function loadTargetsAll() {
@@ -1750,6 +1863,8 @@ ${salesLines}`;
       syncSalesInputs();
       const container = document.getElementById('salesList');
       let html = '';
+      const hint = carryHintHtml();
+      if (hint) html += hint;
       state.sales.persons.forEach((p, i) => {
         const target = state.targets.persons[p.name];
         const rate = p.isRest ? '' : computeRate(p.sales, target);
@@ -1786,6 +1901,21 @@ ${salesLines}`;
       if (hit) badge.classList.add('hit'); else badge.classList.remove('hit');
     }
 
+    // 追补提示：本月挂起的差额（店铺 + 每人），全部为 0 时不显示
+    function carryHintHtml() {
+      const carry = loadCarry();
+      if (!carry || !carryAppliesTo(carry, dateKey())) return '';
+      const parts = [];
+      if (carry.shop > 0) parts.push('店铺+' + fmtNum(carry.shop));
+      const names = state.sales.persons.map(p => p.name);
+      Object.keys(carry.persons || {}).forEach(n => {
+        const v = carry.persons[n];
+        if (v > 0 && names.includes(n)) parts.push(n + '+' + fmtNum(v));
+      });
+      if (parts.length === 0) return '';
+      return '<div class="carry-hint">追补：' + parts.join('｜') + '</div>';
+    }
+
     function saveSalesVal(index) {
       const p = state.sales.persons[index];
       if (!p || p.isRest) return;
@@ -1811,13 +1941,21 @@ ${salesLines}`;
       state.sales.persons.push({ name, isRest: false, sales: '' });
       saveSales();
       input.value = '';
+      state.targets = getTodayEffTargets(); // 新销售补上追补后的生效目标
       renderSalesList();
     }
 
     function deletePerson(index) {
+      const name = state.sales.persons[index].name;
       syncSalesInputs();
       state.sales.persons.splice(index, 1);
       saveSales();
+      // 清理该人挂起的追补差额
+      const carry = loadCarry();
+      if (carry && carry.persons && carry.persons[name]) {
+        delete carry.persons[name];
+        localStorage.setItem('report_carry', JSON.stringify(carry));
+      }
       renderSalesList();
     }
 
