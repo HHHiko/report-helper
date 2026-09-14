@@ -828,6 +828,35 @@
     .btn-save-import:active { background: #06a854; }
     .btn-save-import:disabled { background: #ccc; cursor: default; }
 
+    /* ========== Perf Modal（每日业绩） ========== */
+    .card-label { flex-wrap: wrap; row-gap: 8px; }
+    .card-label .right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+    }
+    .btn-export-tsv {
+      width: 100%;
+      height: 30px;
+      border: none;
+      border-radius: 8px;
+      background: #f0f0f0;
+      color: #666;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+    .btn-export-tsv:active { background: #ddd; }
+    .perf-view-list { max-height: 45vh; }
+    .perf-day { padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
+    .perf-day:last-child { border-bottom: none; }
+    .perf-day-head { font-size: 12px; font-weight: 700; color: #555; margin-bottom: 3px; }
+    .perf-line { font-size: 12px; color: #666; padding: 1px 0; word-break: break-all; }
+    .perf-line.carry { color: #ad6800; }
+    .perf-line.dim { color: #bbb; }
+
     /* Safe area for iPhone notch */
     @supports (padding-top: env(safe-area-inset-top)) {
       .header { padding-top: calc(16px + env(safe-area-inset-top)); }
@@ -900,7 +929,10 @@
     <div class="card">
       <div class="card-label">
         <span class="left"><span class="icon-dot"></span>销售达成率</span>
-        <button class="btn-target-set" onclick="openModal('target')">⚙ 目标设置</button>
+        <span class="right">
+          <button class="btn-target-set" onclick="openModal('target')">⚙ 目标设置</button>
+          <button class="btn-target-set" onclick="openModal('perf')">📊 每日业绩</button>
+        </span>
       </div>
       <div id="salesList"></div>
       <div class="add-member-row">
@@ -948,6 +980,11 @@
       importText: '',
       importPreview: null,       // parseTargetTable / parseRawTable 的解析结果
       importMode: localStorage.getItem('report_import_mode') || 'std', // 'std' 标准表 | 'raw' 原始表(第3/8列)
+      perfTab: 'view',           // 每日业绩弹层：'view' 业绩查看 | 'import' 导入业绩
+      perfYM: (() => { const n = new Date(); return { y: n.getFullYear(), m: n.getMonth() + 1 }; })(),
+      perfImportText: '',
+      perfImportPreview: null,   // parseTargetTable / parseRawActuals 的解析结果
+      perfImportMode: localStorage.getItem('report_perf_import_mode') || 'std', // 'std' 标准表 | 'raw' 原始表(第5列)
     };
 
     // ==================== Init ====================
@@ -1030,9 +1067,12 @@
         title.textContent = '退款明细';
       } else if (type === 'wework') {
         title.textContent = '企业微信收款明细';
-      } else {
+      } else if (type === 'target') {
         title.textContent = '目标设置';
         state.targetTab = 'day';
+      } else if (type === 'perf') {
+        title.textContent = '每日业绩';
+        state.perfTab = 'view'; // 每次打开回到查看页签
       }
 
       renderModalBody();
@@ -1064,6 +1104,8 @@
           const saved = autoSaveDayInputs();
           if (saved) showToast('✅ 已保存 ' + state.targetSel.m + '月' + state.targetSel.d + '日 目标');
         }
+      } else if (state.currentModal === 'perf') {
+        // 查看/导入均已即时保存，无落盘动作
       }
       closeModalDirect();
     }
@@ -1074,6 +1116,10 @@
 
       if (state.currentModal === 'target') {
         renderTargetModalBody();
+        return;
+      }
+      if (state.currentModal === 'perf') {
+        renderPerfModalBody();
         return;
       }
 
@@ -1366,6 +1412,266 @@
       if (box) box.innerHTML = '';
     }
 
+    // ==================== 每日业绩弹层 ====================
+    function renderPerfModalBody() {
+      const body = document.getElementById('modalBody');
+      if (state.perfTab === 'import') {
+        renderPerfImportTab(body);
+        return;
+      }
+      renderPerfViewTab(body);
+    }
+
+    function perfTabsHtml(active) {
+      return `<div class="target-tabs">
+        <button class="target-tab${active === 'view' ? ' active' : ''}" onclick="switchPerfTab('view')">业绩查看</button>
+        <button class="target-tab${active === 'import' ? ' active' : ''}" onclick="switchPerfTab('import')">导入业绩</button>
+      </div>`;
+    }
+
+    function switchPerfTab(tab) {
+      if (state.perfTab === tab) return;
+      if (state.perfTab === 'import') {
+        const text = document.getElementById('perfImportText');
+        if (text) state.perfImportText = text.value;
+      }
+      state.perfTab = tab;
+      renderPerfModalBody();
+    }
+
+    function perfMonthShift(dir) {
+      const text = document.getElementById('perfImportText');
+      if (text) state.perfImportText = text.value;
+      let { y, m } = state.perfYM;
+      m += dir;
+      if (m < 1) { m = 12; y--; }
+      if (m > 12) { m = 1; y++; }
+      state.perfYM = { y, m };
+      state.perfImportPreview = null;
+      renderPerfModalBody();
+    }
+
+    // 业绩查看：按天列出实际/生效目标/达成率与逐日追补差额
+    function renderPerfViewTab(body) {
+      const ym = state.perfYM;
+      const data = perfMonthData(ym.y, ym.m);
+      const rosterNames = state.sales.persons.map(p => p.name);
+      const extraNames = [];
+      data.forEach(day => {
+        if (!day.actual) return;
+        Object.keys(day.actual.persons || {}).forEach(n => {
+          if (!rosterNames.includes(n) && !extraNames.includes(n)) extraNames.push(n);
+        });
+      });
+      const allNames = rosterNames.concat(extraNames);
+
+      let html = perfTabsHtml('view');
+      html += `<div class="ym-nav">
+        <button class="ym-arrow" onclick="perfMonthShift(-1)">◀</button>
+        <span class="ym-label">${ym.y}年${ym.m}月</span>
+        <button class="ym-arrow" onclick="perfMonthShift(1)">▶</button>
+      </div>`;
+      html += '<button class="btn-export-tsv" onclick="copyPerfMonth()">📋 复制本月业绩</button>';
+      html += '<div class="preview-list perf-view-list">';
+      data.forEach(day => {
+        html += `<div class="perf-day"><div class="perf-day-head">${ym.m}月${day.d}日${day.isToday ? '（今天·实时）' : ''}</div>`;
+        // 店铺行
+        const shopAct = day.actual && day.actual.shop ? day.actual.shop : '';
+        const shopEff = day.eff.shop || '';
+        const shopRate = computeRate(shopAct, shopEff);
+        html += `<div class="perf-line">店铺：实际 ${shopAct === '' ? '—' : escapeHtml(shopAct)}｜生效目标 ${shopEff ? escapeHtml(shopEff) : '—'}｜达成率 ${shopRate === '--' ? '—' : escapeHtml(shopRate)}</div>`;
+        // 每人行（有生效目标/追补、有实际或今天休息才显示）
+        allNames.forEach(n => {
+          const p = state.sales.persons.find(x => x.name === n);
+          const isRestToday = day.isToday && p && p.isRest;
+          const act = day.actual && day.actual.persons && day.actual.persons[n] !== undefined ? day.actual.persons[n] : '';
+          const eff = day.eff.persons[n] || '';
+          if (!eff && act === '' && !isRestToday) return;
+          const actTxt = isRestToday ? '休' : (act === '' ? '—' : act);
+          const rate = computeRate(act, eff);
+          html += `<div class="perf-line">${escapeHtml(n)}：实际 ${escapeHtml(actTxt)}｜生效目标 ${eff ? escapeHtml(eff) : '—'}｜达成率 ${rate === '--' ? '—' : escapeHtml(rate)}</div>`;
+        });
+        // 差额行：当天结算后挂起的追补（>0 才显示）
+        const parts = [];
+        if (day.carryOut.shop > 0) parts.push('店铺+' + fmtNum(day.carryOut.shop));
+        Object.keys(day.carryOut.persons || {}).forEach(n => {
+          const v = day.carryOut.persons[n] || 0;
+          if (v > 0 && rosterNames.includes(n)) parts.push(n + '+' + fmtNum(v));
+        });
+        if (parts.length > 0) {
+          html += `<div class="perf-line carry">追补 → ${parts.join('｜')}</div>`;
+        } else if (day.isToday && !day.actual) {
+          html += '<div class="perf-line dim">今日业绩未录入</div>';
+        }
+        html += '</div>';
+      });
+      html += '</div>';
+      body.innerHTML = html;
+    }
+
+    function renderPerfImportTab(body) {
+      const ym = state.perfYM;
+      let html = perfTabsHtml('import');
+      html += `<div class="ym-nav">
+        <button class="ym-arrow" onclick="perfMonthShift(-1)">◀</button>
+        <span class="ym-label">${ym.y}年${ym.m}月</span>
+        <button class="ym-arrow" onclick="perfMonthShift(1)">▶</button>
+      </div>`;
+      html += '<div class="section-hint">在 Excel 中复制整月业绩表，粘贴到下面解析（今天及未来日期保存时跳过）：</div>';
+      html += `<div class="mode-switch">
+        <button class="mode-btn${state.perfImportMode === 'std' ? ' active' : ''}" onclick="switchPerfImportMode('std')">标准表</button>
+        <button class="mode-btn${state.perfImportMode === 'raw' ? ' active' : ''}" onclick="switchPerfImportMode('raw')">原始表（第5列）</button>
+      </div>`;
+      const importPlaceholder = state.perfImportMode === 'raw'
+        ? '直接粘贴整张原始表：&#10;· 日期列自动识别（如 8月1日 / 8.1 / 1日）&#10;· 第5列 = 门店业绩（店铺总业绩）&#10;· 今天及未来日期保存时跳过'
+        : '日期\t店铺业绩\t蒋濠\t薛梓彦&#10;8月1日\t8000\t1500\t1600&#10;8月2日\t9000\t1600\t1700';
+      html += `<textarea id="perfImportText" class="import-text" placeholder="${importPlaceholder}">${escapeHtml(state.perfImportText)}</textarea>`;
+      html += '<button class="btn-parse" onclick="parsePerfImport()">解析并预览</button>';
+      html += '<div id="perfImportPreview" class="import-preview"></div>';
+      html += '<button class="btn-save-import" id="btnSavePerfImport" onclick="savePerfImport()" disabled>确认保存</button>';
+      body.innerHTML = html;
+      if (state.perfImportPreview) renderPerfImportPreview();
+    }
+
+    function switchPerfImportMode(mode) {
+      if (state.perfImportMode === mode) return;
+      const text = document.getElementById('perfImportText');
+      if (text) state.perfImportText = text.value;
+      state.perfImportMode = mode;
+      localStorage.setItem('report_perf_import_mode', mode);
+      state.perfImportPreview = null; // 模式变了，旧预览作废
+      renderPerfImportTab(document.getElementById('modalBody'));
+    }
+
+    function parsePerfImport() {
+      const text = document.getElementById('perfImportText').value;
+      state.perfImportText = text;
+      state.perfImportPreview = state.perfImportMode === 'raw'
+        ? parseRawActuals(text, state.perfYM.y, state.perfYM.m)
+        : parseTargetTable(text, state.perfYM.y, state.perfYM.m);
+      renderPerfImportPreview();
+      const btn = document.getElementById('btnSavePerfImport');
+      if (btn) btn.disabled = Object.keys(state.perfImportPreview.byDate).length === 0;
+    }
+
+    function renderPerfImportPreview() {
+      const box = document.getElementById('perfImportPreview');
+      if (!box || !state.perfImportPreview) return;
+      const r = state.perfImportPreview;
+      const keys = Object.keys(r.byDate).sort();
+      const todayKey = dateKey();
+      const futureCount = keys.filter(k => k >= todayKey).length;
+      let html = '';
+      if (keys.length === 0) {
+        html = '<div class="empty-hint">未解析出有效数据，请检查表格内容</div>';
+      } else {
+        html += `<div class="preview-count">✅ 解析出 ${keys.length} 天业绩</div>`;
+        if (r.dateCol !== undefined) {
+          html += `<div class="preview-info">日期列：第${r.dateCol + 1}列｜第5列=门店业绩</div>`;
+        }
+        html += '<div class="preview-list">';
+        keys.forEach(k => {
+          const t = r.byDate[k];
+          const [, m, d] = k.split('-');
+          const persons = Object.entries(t.persons).map(([n, v]) => `${escapeHtml(n)}${escapeHtml(String(v))}`).join('｜');
+          html += `<div class="preview-row"><span class="preview-date">${parseInt(m)}/${parseInt(d)}</span>${t.shop ? `店铺${escapeHtml(String(t.shop))}` : ''}${persons ? (t.shop ? '｜' : '') + persons : ''}</div>`;
+        });
+        html += '</div>';
+      }
+      r.warnings.forEach(w => {
+        html += `<div class="preview-warn">⚠ ${escapeHtml(w)}</div>`;
+      });
+      if (futureCount > 0) {
+        html += `<div class="preview-warn">⚠ ${futureCount} 天为今天或未来日期，保存时将跳过（今日业绩以当日录入为准）</div>`;
+      }
+      box.innerHTML = html;
+    }
+
+    function savePerfImport() {
+      const r = state.perfImportPreview;
+      if (!r || Object.keys(r.byDate).length === 0) return;
+      const hist = loadHistory();
+      const todayKey = dateKey();
+      let saved = 0, skipped = 0;
+      Object.keys(r.byDate).forEach(k => {
+        if (k >= todayKey) { skipped++; return; } // 今天及未来：以当日录入为准
+        const imp = r.byDate[k];
+        const old = hist[k] || { shop: '', persons: {} };
+        // 合并而非覆盖：原始表只有店铺业绩，不能毁掉自动归档/标准表导入的每人数据
+        hist[k] = {
+          shop: imp.shop || old.shop,
+          persons: Object.assign({}, old.persons, imp.persons),
+        };
+        saved++;
+      });
+      if (saved === 0) {
+        showToast('⚠ 导入数据均为今天或未来，已跳过');
+        return;
+      }
+      const keys = Object.keys(hist).sort();
+      while (keys.length > 90) { delete hist[keys.shift()]; }
+      localStorage.setItem('report_history', JSON.stringify(hist));
+      recomputeCarryChain(); // 按实际业绩重算整月追补链
+      state.targets = getTodayEffTargets();
+      renderSalesList(); // 主页面追补提示与达成率刷新
+      showToast('✅ 已导入 ' + saved + ' 天业绩' + (skipped ? '，跳过 ' + skipped + ' 天（今天/未来）' : ''));
+      state.perfImportPreview = null;
+      const btn = document.getElementById('btnSavePerfImport');
+      if (btn) btn.disabled = true;
+      const box = document.getElementById('perfImportPreview');
+      if (box) box.innerHTML = '';
+    }
+
+    // 导出：当前查看月份整月 TSV 入剪贴板（今天行用实时数据）
+    function copyPerfMonth() {
+      const ym = state.perfYM;
+      const data = perfMonthData(ym.y, ym.m);
+      const names = state.sales.persons.map(p => p.name);
+      const extra = [];
+      data.forEach(day => {
+        if (!day.actual) return;
+        Object.keys(day.actual.persons || {}).forEach(n => {
+          if (!names.includes(n) && !extra.includes(n)) extra.push(n);
+        });
+      });
+      const allNames = names.concat(extra);
+      let header = '日期\t店铺实际\t店铺生效目标\t店铺达成率';
+      allNames.forEach(n => { header += `\t${n}实际\t${n}生效目标\t${n}达成率`; });
+      header += '\t当日追补';
+      const lines = [header];
+      data.forEach(day => {
+        const a = day.actual;
+        const shopAct = a && a.shop ? a.shop : '';
+        const shopEff = day.eff.shop || '';
+        const shopRate = computeRate(shopAct, shopEff);
+        const cells = [`${ym.m}月${day.d}日`, shopAct, shopEff, shopRate === '--' ? '' : shopRate];
+        allNames.forEach(n => {
+          const act = a && a.persons ? (a.persons[n] !== undefined ? a.persons[n] : '') : '';
+          const eff = day.eff.persons[n] || '';
+          const rate = computeRate(act, eff);
+          cells.push(act, eff, rate === '--' ? '' : rate);
+        });
+        const carryParts = [];
+        if (day.carryOut.shop > 0) carryParts.push('店铺+' + fmtNum(day.carryOut.shop));
+        Object.keys(day.carryOut.persons || {}).forEach(n => {
+          const v = day.carryOut.persons[n] || 0;
+          if (v > 0 && names.includes(n)) carryParts.push(n + '+' + fmtNum(v));
+        });
+        cells.push(carryParts.join('｜'));
+        lines.push(cells.join('\t'));
+      });
+      const text = lines.join('\n');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          showToast('✅ 已复制本月业绩表');
+        }).catch(() => {
+          fallbackCopy(text);
+        });
+      } else {
+        fallbackCopy(text);
+      }
+    }
+
     // ==================== Entry CRUD ====================
     function addEntry() {
       const input = document.getElementById('modalAddInput');
@@ -1566,10 +1872,8 @@ ${salesLines}`;
 
     // 生效目标 = 计划目标 + 挂起追补。店铺无计划 → 未设置（追补继续挂起）；
     // 个人无计划但有追补 → 单独显示追补（必须补完）
-    function getTodayEffTargets() {
-      const plan = getTodayTargets();
-      const carry = loadCarry();
-      if (!carry || !carryAppliesTo(carry, dateKey())) return plan;
+    function effTargets(plan, carry, dateStr) {
+      if (!carry || !carryAppliesTo(carry, dateStr)) return plan;
       const eff = { shop: '', persons: {} };
       if (plan.shop) {
         eff.shop = fmtNum(parseFloat(plan.shop) + (carry.shop || 0));
@@ -1586,17 +1890,18 @@ ${salesLines}`;
       return eff;
     }
 
-    // 结算某天：差额 = 生效目标 − 实际，>0 部分挂起（覆盖式，差额链自动滚动）。
-    // 当天重复结算（复制多次/跨天归档）时，回退用上一次结算前的旧差额作基数，避免重复叠加。
-    // 休息人员与无计划人员：差额保持原样挂起。
-    function settleDay(dateStr, shopActualStr, personsArr) {
-      const carry = loadCarry();
-      const prev = (carry && carry.date === dateStr) ? (carry.prev || null) : carry;
-      const prevApplies = carryAppliesTo(prev, dateStr);
-      const plan = loadTargetsAll()[dateStr] || { shop: '', persons: {} };
+    function getTodayEffTargets() {
+      return effTargets(getTodayTargets(), loadCarry(), dateKey());
+    }
+
+    // 纯结算步骤：给定某天计划、该天起点的挂起差额 carryIn、当天实际，产出结算后的挂起差额。
+    // prevApplies：carryIn 是否对这天生效（同年月且更早）。
+    // missingAsRest：计划里有人但实际数据里没有该人时——true 视为休息挂起（历史数据没有休息标记），
+    // false 按实际 0 结算（在线路径：名单内的人没填业绩就是 0）。休息与无计划人员：差额保持原样挂起。
+    function settleStep(plan, carryIn, prevApplies, shopActualStr, personActuals, missingAsRest) {
       const shopActual = parseFloat(shopActualStr);
 
-      let shopCarry = prev && prev.shop ? prev.shop : 0;
+      let shopCarry = carryIn && carryIn.shop ? carryIn.shop : 0;
       if (plan.shop) {
         const base = parseFloat(plan.shop) + (prevApplies ? shopCarry : 0);
         const short = base - (isNaN(shopActual) ? 0 : shopActual);
@@ -1606,21 +1911,35 @@ ${salesLines}`;
       const personsCarry = {};
       const names = new Set();
       Object.keys(plan.persons).forEach(n => names.add(n));
-      if (prev) Object.keys(prev.persons || {}).forEach(n => names.add(n));
+      if (carryIn) Object.keys(carryIn.persons || {}).forEach(n => names.add(n));
       names.forEach(n => {
-        const p = (personsArr || []).find(x => x.name === n);
-        let v = prev && prev.persons ? (prev.persons[n] || 0) : 0;
+        const p = (personActuals || {})[n];
+        let v = carryIn && carryIn.persons ? (carryIn.persons[n] || 0) : 0;
+        if (missingAsRest && !p) { personsCarry[n] = v; return; } // 历史缺人：视为休息，挂起
         if (p && p.isRest) { personsCarry[n] = v; return; } // 休息：差额挂起不变
         if (plan.persons[n]) {
           const base = parseFloat(plan.persons[n]) + (prevApplies ? v : 0);
-          const actual = p && p.sales !== '' ? parseFloat(p.sales) : 0;
+          const actual = p && p.sales !== '' && p.sales != null ? parseFloat(p.sales) : 0;
           const short = base - (isNaN(actual) ? 0 : actual);
           v = Math.max(0, Math.round(short * 100) / 100);
         }
         personsCarry[n] = v;
       });
+      return { shop: shopCarry, persons: personsCarry };
+    }
+
+    // 结算某天：差额 = 生效目标 − 实际，>0 部分挂起（覆盖式，差额链自动滚动）。
+    // 当天重复结算（复制多次/跨天归档）时，回退用上一次结算前的旧差额作基数，避免重复叠加。
+    function settleDay(dateStr, shopActualStr, personsArr) {
+      const carry = loadCarry();
+      const prev = (carry && carry.date === dateStr) ? (carry.prev || null) : carry;
+      const prevApplies = carryAppliesTo(prev, dateStr);
+      const plan = loadTargetsAll()[dateStr] || { shop: '', persons: {} };
+      const personActuals = {};
+      (personsArr || []).forEach(x => { personActuals[x.name] = x; });
+      const out = settleStep(plan, prev, prevApplies, shopActualStr, personActuals, false);
       const prevStored = prev ? { date: prev.date, shop: prev.shop, persons: prev.persons } : undefined;
-      localStorage.setItem('report_carry', JSON.stringify({ date: dateStr, shop: shopCarry, persons: personsCarry, prev: prevStored }));
+      localStorage.setItem('report_carry', JSON.stringify({ date: dateStr, shop: out.shop, persons: out.persons, prev: prevStored }));
     }
 
     // 复制报表时结算当天（同天重复结算 = 覆盖，取最新数据）
@@ -1639,6 +1958,98 @@ ${salesLines}`;
       while (keys.length > 90) { delete hist[keys.shift()]; }
       localStorage.setItem('report_history', JSON.stringify(hist));
       settleDay(saved.date, saved.shop || '0', saved.persons);
+    }
+
+    // ==================== 每日业绩：追补链重算 ====================
+    // 链纯计算：从当月 1 号起逐日结算（每月清零），返回每天 { plan, carryIn, eff, carryOut }。
+    // 历史天用 report_history；整天缺失 → 差额冻结传递（不产生新差额）。
+    function computePerfChain(y, m) {
+      const targets = loadTargetsAll();
+      const hist = loadHistory();
+      const days = daysInMonth(y, m);
+      const chain = {};
+      let carryIn = { date: '', shop: 0, persons: {} };
+      for (let d = 1; d <= days; d++) {
+        const key = dateKeyOf(y, m, d);
+        const plan = targets[key] || { shop: '', persons: {} };
+        const actual = hist[key];
+        const eff = effTargets(plan, carryIn, key);
+        let carryOut = carryIn; // 无数据：冻结传递
+        if (actual) {
+          const personActuals = {};
+          Object.keys(actual.persons || {}).forEach(n => {
+            personActuals[n] = { sales: actual.persons[n], isRest: false };
+          });
+          // 链内 carryIn 必为同月且更早，prevApplies 恒真
+          const out = settleStep(plan, carryIn, true, actual.shop || '0', personActuals, true);
+          carryOut = { date: key, shop: out.shop, persons: out.persons };
+        }
+        chain[key] = { plan, carryIn, eff, carryOut };
+        carryIn = carryOut;
+      }
+      return chain;
+    }
+
+    // 导入业绩后：重算本月追补链并覆盖 report_carry。
+    // prev 存「结算日之前的 carryIn」——跨天归档重结算该天时靠 carry.prev 幂等，避免链断裂。
+    function recomputeCarryChain() {
+      const now = new Date();
+      const y = now.getFullYear(), m = now.getMonth() + 1;
+      const todayD = now.getDate();
+      if (todayD <= 1) return; // 今天为当月 1 号：无历史天，不写 carry
+      const chain = computePerfChain(y, m);
+      const settledKey = chain[dateKeyOf(y, m, todayD - 1)].carryOut.date; // 最后一个有数据的结算日
+      if (!settledKey) return; // 本月历史无业绩数据：不覆盖在线结算结果
+      const carryOut = chain[settledKey].carryOut;
+      const carryIn = chain[settledKey].carryIn;
+      const prevStored = carryIn && (carryIn.shop > 0 || Object.keys(carryIn.persons || {}).some(n => (carryIn.persons[n] || 0) > 0))
+        ? { date: carryIn.date, shop: carryIn.shop, persons: carryIn.persons }
+        : undefined;
+      localStorage.setItem('report_carry', JSON.stringify({
+        date: settledKey,
+        shop: carryOut.shop,
+        persons: carryOut.persons,
+        prev: prevStored,
+      }));
+    }
+
+    // 查看/导出用：链 + 计划 + 实际汇总；今天行取实时录入（有赞 + 每人业绩）。
+    // 今天有实时输入时按实时数据试算当天差额（与复制报表时结算口径一致）。
+    function perfMonthData(y, m) {
+      syncSalesInputs();
+      const now = new Date();
+      const isCurMonth = y === now.getFullYear() && m === now.getMonth() + 1;
+      const todayKey = dateKey();
+      const chain = computePerfChain(y, m);
+      const hist = loadHistory();
+      const list = [];
+      for (let d = 1; d <= daysInMonth(y, m); d++) {
+        const key = dateKeyOf(y, m, d);
+        const c = chain[key];
+        let actual = hist[key] || null;
+        let carryOut = c.carryOut;
+        const isToday = isCurMonth && key === todayKey;
+        if (isToday) {
+          const shopVal = (document.getElementById('youzanAmount') || { value: '' }).value.trim();
+          const persons = {};
+          let hasLive = !!shopVal;
+          state.sales.persons.forEach(p => {
+            if (p.isRest) return;
+            if (p.sales !== '') { persons[p.name] = String(p.sales); hasLive = true; }
+          });
+          if (hasLive) {
+            actual = { shop: shopVal || '0', persons };
+            const personActuals = {};
+            state.sales.persons.forEach(p => { personActuals[p.name] = p; });
+            const out = settleStep(c.plan, c.carryIn, true, shopVal || '0', personActuals, false);
+            carryOut = { date: key, shop: out.shop, persons: out.persons };
+          } else {
+            actual = null;
+          }
+        }
+        list.push({ key, d, isToday, actual, plan: c.plan, carryIn: c.carryIn, eff: c.eff, carryOut });
+      }
+      return list;
     }
 
     function loadTargetsAll() {
@@ -1819,6 +2230,55 @@ ${salesLines}`;
       }
       if (Object.keys(byDate).length === 0) {
         return { byDate, warnings: warnings.concat(['未解析出目标数据：请确认第3列为店铺目标、第8列为个人目标']) };
+      }
+      return { byDate, warnings, dateCol };
+    }
+
+    // ===== 原始表解析（业绩版）：自动找日期列，第5列=门店业绩（店铺总业绩） =====
+    function parseRawActuals(text, year, month) {
+      const warnings = [];
+      const byDate = {};
+      const rows = text.split(/\r?\n/).map(r => r.trim()).filter(r => r);
+      if (rows.length < 2) {
+        return { byDate, warnings: ['内容太短：请粘贴含表头的完整表格（至少两行）'] };
+      }
+      const splitCells = row => row.includes('\t')
+        ? row.split('\t').map(c => c.trim())
+        : row.split(/[,，]/).map(c => c.trim());
+      const grid = rows.map(splitCells);
+      const width = grid.reduce((m, r) => Math.max(m, r.length), 0);
+
+      // 1) 自动识别日期列：各列中能解析为日期的格数最多的那一列
+      let dateCol = -1, best = 0;
+      for (let c = 0; c < width; c++) {
+        let cnt = 0;
+        grid.forEach(r => { if (c < r.length && parseDateCell(r[c], year, month) !== null) cnt++; });
+        if (cnt > best) { best = cnt; dateCol = c; }
+      }
+      if (best < 2) {
+        return { byDate, warnings: ['未找到日期列：请确认表格含日期（如 8月1日 / 8/1 / 1日），并选对年月'] };
+      }
+
+      // 2) 逐行：日期列→日期，第5列(索引4)→门店业绩
+      let skipped = 0;
+      grid.forEach((cells) => {
+        const d = parseDateCell(cells[dateCol] || '', year, month);
+        if (!d) {
+          // 日期无法识别（如合并单元格导致为空）：第5列有数字则提示
+          if (cleanNum(cells[4]) !== null) skipped++;
+          return;
+        }
+        const shop = cleanNum(cells[4]);
+        if (shop === null) return;
+        const key = dateKeyOf(d.y, d.m, d.d);
+        if (!byDate[key]) byDate[key] = { shop: '', persons: {} };
+        byDate[key].shop = String(shop);
+      });
+      if (skipped > 0) {
+        warnings.push(skipped + ' 行日期无法识别或为空（可能是合并单元格），已跳过');
+      }
+      if (Object.keys(byDate).length === 0) {
+        return { byDate, warnings: warnings.concat(['未解析出门店业绩：请确认第 5 列为门店业绩']) };
       }
       return { byDate, warnings, dateCol };
     }
