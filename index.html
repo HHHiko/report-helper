@@ -857,6 +857,20 @@
     .perf-line.carry { color: #ad6800; }
     .perf-line.dim { color: #bbb; }
 
+    /* ========== 云端同步 ========== */
+    .sync-icon {
+      position: absolute;
+      top: 14px;
+      right: 16px;
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+      z-index: 2;
+    }
+    .sync-link-row { font-size: 14px; color: #555; padding: 6px 0; }
+    .sync-link-row a { color: #1a6fc4; text-decoration: none; }
+    #syncRepoInput, #syncTokenInput, #syncShareLink { font-size: 16px; }
+
     /* Safe area for iPhone notch */
     @supports (padding-top: env(safe-area-inset-top)) {
       .header { padding-top: calc(16px + env(safe-area-inset-top)); }
@@ -967,8 +981,17 @@
 
   <script>
     // ==================== State ====================
+    let pendingArchive = null; // 跨天待归档快照（延后到首次云端拉取完成后归档，见 maybeArchiveAndSettle）
     const state = {
-      storeName: localStorage.getItem('report_storeName') || '广州永庆坊店',
+      storeName: (() => {
+        const raw = localStorage.getItem('report_storeName');
+        if (!raw) return '广州永庆坊店';
+        try {
+          const obj = JSON.parse(raw);
+          if (obj && typeof obj.value === 'string') return obj.value;
+        } catch (e) {}
+        return raw; // 旧格式纯字符串
+      })(),
       refundEntries: [],
       weworkEntries: [],
       currentModal: null, // 'refund' | 'wework' | 'target' | null
@@ -986,6 +1009,415 @@
       perfImportPreview: null,   // parseTargetTable / parseRawActuals 的解析结果
       perfImportMode: localStorage.getItem('report_perf_import_mode') || 'std', // 'std' 标准表 | 'raw' 原始表(第5列)
     };
+
+    // ==================== 云端同步 ====================
+    // 多设备互通：数据存私有 GitHub 仓 data/report-data.json（Contents API 读写）。
+    // 本地优先：localStorage 是真值源，断网/无配置时 App 照常可用，同步尽力而为。
+    // 合并以各键的 ts（Date.now）定胜负；只有用户真实编辑才盖新 ts（见 saveSales 等写点），
+    // 跨天 rollover 继承旧 ts——否则离线设备会把同事已填的新业绩重置为空并压掉。
+    let syncState = {
+      config: syncLoadConfig(),
+      status: 'none',   // none 未配置 | ok 已同步 | pending 待推送 | error 同步失败
+      dirty: false,
+      gen: 0,
+      inFlight: false,
+    };
+    let syncPushTimer = null;
+
+    function syncLoadConfig() {
+      try {
+        const cfg = JSON.parse(localStorage.getItem('report_sync_config'));
+        if (cfg && typeof cfg.repo === 'string' && cfg.repo && typeof cfg.token === 'string' && cfg.token) return cfg;
+      } catch (e) {}
+      return null;
+    }
+
+    function syncSaveConfig(repo, token) {
+      const cfg = { repo: repo.trim(), token: token.trim() };
+      localStorage.setItem('report_sync_config', JSON.stringify(cfg));
+      syncState.config = cfg;
+    }
+
+    // 同事分享链接 ?repo=xx&token=xx 打开即自动配置，并把 token 从地址栏抹掉（防转发外泄）
+    function syncInitFromUrl() {
+      try {
+        const params = new URLSearchParams(location.search);
+        const repo = params.get('repo'), token = params.get('token');
+        if (repo && token) syncSaveConfig(repo, token);
+        if (params.has('repo') || params.has('token')) {
+          history.replaceState(null, '', location.pathname + location.hash);
+        }
+      } catch (e) {}
+    }
+
+    function syncIsEnabled() {
+      return !!(syncState.config && syncState.config.repo && syncState.config.token);
+    }
+
+    function syncSetStatus(s) {
+      syncState.status = s;
+      const el = document.getElementById('syncIcon');
+      if (el) el.textContent = { none: '☁️', ok: '✅', pending: '📤', error: '⚠️' }[s] || '☁️';
+    }
+
+    // 任一写点已修改 → 标记待推送（防抖 3 秒合并成一轮）
+    function syncMarkDirty() {
+      if (!syncIsEnabled()) return;
+      syncState.dirty = true;
+      syncState.gen++;
+      syncSetStatus('pending');
+      clearTimeout(syncPushTimer);
+      syncPushTimer = setTimeout(syncPush, 3000);
+    }
+
+    function syncSchedulePush(ms) {
+      clearTimeout(syncPushTimer);
+      syncPushTimer = setTimeout(syncPush, ms);
+    }
+
+    function syncSetup() {
+      syncInitFromUrl();
+      renderSyncIcon();
+      if (!syncIsEnabled()) {
+        // 无配置：跨天归档保持同步执行（与旧时序一致）
+        maybeArchiveAndSettle();
+        refreshDerived();
+        return;
+      }
+      // 首次拉取（成败都走 syncFinish 完成归档），之后定期同步
+      syncPull().then(syncFinish, syncFinish);
+      setInterval(function() {
+        if (document.hidden) return;
+        syncPull();
+      }, 60000);
+      document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+          if (syncState.dirty) syncPush(); // 退后台尽力把未同步的修改推出去
+        } else {
+          syncPull();
+        }
+      });
+    }
+
+    function syncFinish() {
+      maybeArchiveAndSettle();
+      refreshDerived();
+      if (syncState.dirty) syncPush();
+    }
+
+    function renderSyncIcon() {
+      if (document.getElementById('syncIcon')) return;
+      const header = document.querySelector('.header');
+      if (!header) return;
+      const span = document.createElement('span');
+      span.id = 'syncIcon';
+      span.className = 'sync-icon';
+      span.title = '云端同步';
+      span.addEventListener('click', function() { openModal('sync'); });
+      header.appendChild(span);
+      syncSetStatus(syncState.status);
+    }
+
+    // ==================== 同步数据层 ====================
+    // 组装共享文件：现读 localStorage（真值源），缺 ts 视为 0。派生值（state.targets）不进。
+    function buildShared() {
+      let sales = {};
+      try { sales = JSON.parse(localStorage.getItem('report_sales')) || {}; } catch (e) {}
+      if (sales && Array.isArray(sales.persons)) {
+        sales.persons = sales.persons.map(function(p) {
+          return { name: p.name, isRest: !!p.isRest, sales: p.sales || '', ts: p.ts || 0 };
+        });
+      }
+      const storeRaw = localStorage.getItem('report_storeName');
+      let storeName = { value: '广州永庆坊店', ts: 0 };
+      if (storeRaw) {
+        try {
+          const obj = JSON.parse(storeRaw);
+          storeName = (obj && typeof obj.value === 'string') ? { value: obj.value, ts: obj.ts || 0 } : { value: storeRaw, ts: 0 };
+        } catch (e) { storeName = { value: storeRaw, ts: 0 }; }
+      }
+      let carry = null;
+      try { carry = JSON.parse(localStorage.getItem('report_carry')) || null; } catch (e) {}
+      return { v: 1, storeName: storeName, sales: sales, targets: loadTargetsAll(), history: loadHistory(), carry: carry };
+    }
+
+    // 纯合并：各键 ts 大者胜（tie→本地）。sales 先比日期（旧设备未翻天的数据不压今天），
+    // 同日按对象 ts 定 shop、persons 逐人并集比 ts；history 败者空值回填 + shop 非空优先。
+    function mergeShared(local, remote) {
+      if (!remote || typeof remote !== 'object') return local;
+      const tsOf = function(x) { return (x && typeof x.ts === 'number' && x.ts > 0) ? x.ts : 0; };
+      const win = function(a, b) { return tsOf(a) >= tsOf(b) ? a : b; };
+      const empty = function(v) { return v === undefined || v === null || v === ''; };
+
+      const storeName = win(local.storeName || { value: '', ts: 0 }, remote.storeName || { value: '', ts: 0 });
+
+      let sales;
+      const lS = local.sales || {}, rS = remote.sales || {};
+      if ((rS.date || '') > (lS.date || '')) {
+        sales = rS;
+      } else if ((rS.date || '') < (lS.date || '')) {
+        sales = lS;
+      } else {
+        sales = win(lS, rS);
+        const names = [], seen = {};
+        (lS.persons || []).forEach(function(p) { if (p && p.name && !seen[p.name]) { seen[p.name] = 1; names.push(p.name); } });
+        (rS.persons || []).forEach(function(p) { if (p && p.name && !seen[p.name]) { seen[p.name] = 1; names.push(p.name); } });
+        const findP = function(arr, name) {
+          for (let i = 0; i < (arr || []).length; i++) if (arr[i] && arr[i].name === name) return arr[i];
+          return null;
+        };
+        const persons = names.map(function(name) {
+          return win(findP(lS.persons, name) || { name: name, isRest: false, sales: '', ts: 0 },
+                     findP(rS.persons, name) || { name: name, isRest: false, sales: '', ts: 0 });
+        });
+        sales = Object.assign({}, sales, { persons: persons });
+      }
+
+      const targets = {};
+      const tKeys = Object.keys(Object.assign({}, local.targets || {}, remote.targets || {}));
+      tKeys.forEach(function(k) {
+        const a = (local.targets || {})[k], b = (remote.targets || {})[k];
+        targets[k] = (a && b) ? win(a, b) : (a || b);
+      });
+
+      const history = {};
+      const hKeys = Object.keys(Object.assign({}, local.history || {}, remote.history || {}));
+      hKeys.forEach(function(k) {
+        const a = (local.history || {})[k], b = (remote.history || {})[k];
+        if (!a || !b) { history[k] = a || b; return; }
+        const w = win(a, b), l = (w === a) ? b : a;
+        const persons = Object.assign({}, l.persons || {}, w.persons || {});
+        Object.keys(l.persons || {}).forEach(function(n) {
+          if (!(n in (w.persons || {})) || empty(w.persons[n])) persons[n] = l.persons[n];
+        });
+        let shop = w.shop;
+        if ((empty(shop) || shop === '0') && !empty(l.shop) && l.shop !== '0') shop = l.shop;
+        history[k] = Object.assign({}, w, { shop: shop, persons: persons });
+      });
+
+      let carry = null;
+      if (local.carry && remote.carry) carry = win(local.carry, remote.carry);
+      else carry = local.carry || remote.carry;
+
+      return { v: 1, storeName: storeName, sales: sales, targets: targets, history: history, carry: carry };
+    }
+
+    // 合并结果写回本地并刷新界面。云端 sales 仅当日期为今天时采纳（昨天 dated 不覆盖今天的现场）。
+    function applyShared(merged) {
+      if (merged.storeName && typeof merged.storeName.value === 'string' && merged.storeName.value) {
+        localStorage.setItem('report_storeName', JSON.stringify(merged.storeName));
+        state.storeName = merged.storeName.value;
+        const el = document.getElementById('storeName');
+        if (el) el.textContent = state.storeName;
+      }
+      if (merged.sales && merged.sales.date === dateKey()) {
+        const json = JSON.stringify(merged.sales);
+        localStorage.setItem('report_sales', json);
+        prevSalesJson = json; // diff 打点基线同步到合并结果
+        state.sales = merged.sales;
+        const youzan = document.getElementById('youzanAmount');
+        if (youzan) youzan.value = merged.sales.shop || '';
+        syncTotalAmount();
+      }
+      localStorage.setItem('report_targets', JSON.stringify(merged.targets || {}));
+      localStorage.setItem('report_history', JSON.stringify(merged.history || {}));
+      if (merged.carry) localStorage.setItem('report_carry', JSON.stringify(merged.carry));
+      refreshDerived(true); // skipSync：DOM 还是旧值，禁止回读覆盖合并结果
+    }
+
+    // 合并/归档后统一刷新：追补链重算 + 生效目标 + 界面
+    function refreshDerived(skipSync) {
+      recomputeCarryChain();
+      state.targets = getTodayEffTargets();
+      renderSalesList(skipSync);
+      if (state.currentModal === 'perf') renderPerfModalBody();
+    }
+
+    // 推送/拉取前把 DOM 中未失焦的输入收进 state 并落盘（修复「填完未点别处就复制」的漏存）
+    function syncFlushDom() {
+      syncSalesInputs();
+      saveSales();
+    }
+
+    // UTF-8 安全 base64：GitHub Contents API 的 content 字段要求 base64
+    function syncB64Encode(str) {
+      const bytes = new TextEncoder().encode(str);
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      }
+      return btoa(bin);
+    }
+
+    function syncB64Decode(b64) {
+      const clean = String(b64).replace(/\s/g, ''); // GitHub 返回的 base64 带换行
+      const bin = atob(clean);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new TextDecoder().decode(bytes);
+    }
+
+    function syncApiUrl(repo) {
+      return 'https://api.github.com/repos/' + repo + '/contents/data%2Freport-data.json';
+    }
+
+    // 拉取：GET 数据文件 → 合并 → 写回本地并刷新。失败只改状态图标，不打扰使用。
+    function syncPull() {
+      if (!syncIsEnabled()) return Promise.resolve(null);
+      const cfg = syncState.config;
+      return fetch(syncApiUrl(cfg.repo), {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer ' + cfg.token, 'Accept': 'application/vnd.github+json' },
+      }).then(function(res) {
+        if (res.status === 404) { if (!syncState.dirty) syncSetStatus('ok'); return null; } // 云端还没文件：首次推送会创建
+        if (res.status === 401 || res.status === 403) {
+          syncSetStatus('error');
+          showToast('⚠ 同步令牌无效，请点右上角图标重新设置');
+          return null;
+        }
+        if (!res.ok) throw new Error('pull http ' + res.status);
+        return res.json();
+      }).then(function(data) {
+        if (!data || !data.content) return null;
+        let remote = null;
+        try { remote = JSON.parse(syncB64Decode(data.content)); } catch (e) { return null; }
+        syncFlushDom();
+        applyShared(mergeShared(buildShared(), remote));
+        syncSetStatus(syncState.dirty ? 'pending' : 'ok');
+        return remote;
+      }).catch(function() {
+        syncSetStatus('error');
+        return null;
+      });
+    }
+
+    // 推送：读-改-写（先取最新 sha 与内容合并再 PUT；409/422 冲突重试最多 3 轮）。
+    // 每轮都从 localStorage 重新生成载荷；期间有新写入则保留 dirty，收尾再补推一轮。
+    function syncPush() {
+      if (!syncIsEnabled() || syncState.inFlight) return Promise.resolve(null);
+      syncState.inFlight = true;
+      const cfg = syncState.config;
+      const startGen = syncState.gen;
+      const apiUrl = syncApiUrl(cfg.repo);
+      const headers = { 'Authorization': 'Bearer ' + cfg.token, 'Accept': 'application/vnd.github+json' };
+
+      const attempt = function(round) {
+        return fetch(apiUrl, { method: 'GET', headers: headers }).then(function(res) {
+          if (res.status === 401 || res.status === 403) {
+            syncSetStatus('error');
+            showToast('⚠ 同步令牌无效，请点右上角图标重新设置');
+            return { abort: true };
+          }
+          if (res.status === 404) return { sha: null, remote: null };
+          if (!res.ok) throw new Error('push get ' + res.status);
+          return res.json().then(function(data) {
+            let remote = null;
+            try { remote = data.content ? JSON.parse(syncB64Decode(data.content)) : null; } catch (e) {}
+            return { sha: data.sha, remote: remote };
+          });
+        }).then(function(got) {
+          if (got.abort) return { done: true };
+          syncFlushDom();
+          let merged = buildShared();
+          if (got.remote) {
+            merged = mergeShared(merged, got.remote);
+            applyShared(merged);
+          }
+          const body = { message: 'sync ' + dateKey(), content: syncB64Encode(JSON.stringify(merged)), branch: 'main' };
+          if (got.sha) body.sha = got.sha;
+          return fetch(apiUrl, { method: 'PUT', headers: headers, body: JSON.stringify(body) }).then(function(res) {
+            if (res.status === 200 || res.status === 201) {
+              if (syncState.gen === startGen) syncState.dirty = false;
+              syncSetStatus(syncState.dirty ? 'pending' : 'ok');
+              return { done: true, ok: true };
+            }
+            if (res.status === 409 || res.status === 422) {
+              if (round < 3) return attempt(round + 1); // 并发冲突/文件刚创建：重取重合并
+              throw new Error('push conflict exhausted');
+            }
+            if (res.status === 401 || res.status === 403) {
+              syncSetStatus('error');
+              showToast('⚠ 同步令牌无效，请点右上角图标重新设置');
+              return { done: true };
+            }
+            throw new Error('push put ' + res.status);
+          });
+        });
+      };
+
+      return attempt(1).catch(function() {
+        syncSetStatus('error');
+        return null;
+      }).then(function(res) {
+        syncState.inFlight = false;
+        if (syncState.dirty) syncSchedulePush(1500); // 推送期间有新写入：补推一轮
+        return res;
+      });
+    }
+
+    // ==================== 同步设置弹层 ====================
+    function renderSyncModalBody() {
+      const body = document.getElementById('modalBody');
+      if (!syncIsEnabled()) {
+        body.innerHTML = `
+          <div class="section-hint">多个同事各填各的业绩、数据自动互通。两步配置：</div>
+          <div class="sync-link-row"><a href="https://github.com/new?name=report-data&visibility=private&description=%E4%BA%A4%E7%8F%AD%E6%8A%A5%E8%A1%A8%E5%8A%A9%E6%89%8B%E6%95%B0%E6%8D%AE%E4%BB%93" target="_blank" rel="noopener">① 点此创建私有数据仓（名称填 report-data）</a></div>
+          <div class="sync-link-row"><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">② 点此生成令牌</a></div>
+          <div class="preview-warn">令牌设置：仓库只勾 report-data → 权限选 Contents 读写。令牌等同密码，请勿外传（发给同事的链接会携带令牌）。</div>
+          <div class="input-row" style="margin-top:12px">
+            <span class="field-name">数据仓</span>
+            <input type="text" id="syncRepoInput" value="${escapeHtml(syncState.config ? syncState.config.repo : '')}" placeholder="HHHiko/report-data">
+          </div>
+          <div class="input-row">
+            <span class="field-name">令牌</span>
+            <input type="text" id="syncTokenInput" value="${escapeHtml(syncState.config ? syncState.config.token : '')}" placeholder="github_pat_...">
+          </div>
+          <button class="btn-save-import" onclick="syncSaveFromModal()">保存并开始同步</button>
+        `;
+      } else {
+        const cfg = syncState.config;
+        const statusText = { none: '未配置', ok: '已同步', pending: '待推送', error: '同步失败' }[syncState.status] || '未知';
+        const link = location.origin + location.pathname + '?repo=' + encodeURIComponent(cfg.repo) + '&token=' + encodeURIComponent(cfg.token);
+        body.innerHTML = `
+          <div class="section-hint">状态：${statusText}｜打开自动拉取，填写自动推送，断网时本地照常可用</div>
+          <div class="section-hint">同事链接（发到店铺微信群，点开即自动配置）：</div>
+          <textarea id="syncShareLink" class="import-text" readonly style="min-height:72px">${escapeHtml(link)}</textarea>
+          <button class="btn-apply-month" style="width:100%;height:32px;margin-top:8px" onclick="syncCopyLink()">📋 复制同事链接</button>
+          <button class="btn-save-import" onclick="syncPush()">🔄 立即同步</button>
+          <button class="btn-parse" style="background:#eee;color:#888" onclick="syncClearConfig()">清除同步配置（本地数据保留）</button>
+        `;
+      }
+    }
+
+    function syncSaveFromModal() {
+      const repo = document.getElementById('syncRepoInput').value.trim();
+      const token = document.getElementById('syncTokenInput').value.trim();
+      if (!repo || !token) { showToast('请填写数据仓和令牌'); return; }
+      syncSaveConfig(repo, token);
+      renderSyncModalBody();
+      showToast('✅ 配置已保存');
+      syncPush(); // 立即把本机数据推上去（远程已有文件则先合并）
+    }
+
+    function syncCopyLink() {
+      const ta = document.getElementById('syncShareLink');
+      const text = ta ? ta.value : '';
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() { showToast('✅ 已复制同事链接'); }).catch(function() { fallbackCopy(text); });
+      } else {
+        fallbackCopy(text);
+      }
+    }
+
+    function syncClearConfig() {
+      localStorage.removeItem('report_sync_config');
+      syncState.config = null;
+      syncState.dirty = false;
+      clearTimeout(syncPushTimer);
+      syncSetStatus('none');
+      renderSyncModalBody();
+      showToast('已清除同步配置（本地数据保留）');
+    }
 
     // ==================== Init ====================
     function init() {
@@ -1012,6 +1444,7 @@
       updateRefundDisplay();
       updateWeworkDisplay();
       renderSalesList();
+      syncSetup();
     }
 
     function setupStoreName() {
@@ -1033,7 +1466,8 @@
           const newName = input.value.trim();
           if (newName) {
             state.storeName = newName;
-            localStorage.setItem('report_storeName', newName);
+            localStorage.setItem('report_storeName', JSON.stringify({ value: newName, ts: Date.now() }));
+            syncMarkDirty();
           }
           const span = document.createElement('span');
           span.id = 'storeName';
@@ -1073,6 +1507,8 @@
       } else if (type === 'perf') {
         title.textContent = '每日业绩';
         state.perfTab = 'view'; // 每次打开回到查看页签
+      } else if (type === 'sync') {
+        title.textContent = '云端同步';
       }
 
       renderModalBody();
@@ -1106,6 +1542,8 @@
         }
       } else if (state.currentModal === 'perf') {
         // 查看/导入均已即时保存，无落盘动作
+      } else if (state.currentModal === 'sync') {
+        // 配置已即时保存，无落盘动作
       }
       closeModalDirect();
     }
@@ -1120,6 +1558,10 @@
       }
       if (state.currentModal === 'perf') {
         renderPerfModalBody();
+        return;
+      }
+      if (state.currentModal === 'sync') {
+        renderSyncModalBody();
         return;
       }
 
@@ -1294,12 +1736,15 @@
       for (let d = 1; d <= days; d++) {
         const key = dateKeyOf(y, m, d);
         const t = all[key] || { shop: '', persons: {} };
+        const changed = Object.keys(persons).some(n => t.persons[n] !== persons[n]);
         t.persons = Object.assign({}, t.persons, persons);
+        if (changed) t.ts = Date.now(); // 只给实际变化的日盖 ts
         all[key] = t;
       }
       const keys = Object.keys(all).sort();
       while (keys.length > 90) { delete all[keys.shift()]; }
       localStorage.setItem('report_targets', JSON.stringify(all));
+      syncMarkDirty();
       const todayKey = dateKey();
       if (all[todayKey]) {
         state.targets = getTodayEffTargets();
@@ -1395,10 +1840,11 @@
       const r = state.importPreview;
       if (!r || Object.keys(r.byDate).length === 0) return;
       const all = loadTargetsAll();
-      Object.keys(r.byDate).forEach(k => { all[k] = r.byDate[k]; });
+      Object.keys(r.byDate).forEach(k => { all[k] = Object.assign({}, r.byDate[k], { ts: Date.now() }); });
       const keys = Object.keys(all).sort();
       while (keys.length > 90) { delete all[keys.shift()]; }
       localStorage.setItem('report_targets', JSON.stringify(all));
+      syncMarkDirty();
       const today = dateKey();
       if (r.byDate[today]) {
         state.targets = getTodayEffTargets();
@@ -1598,19 +2044,20 @@
         const imp = r.byDate[k];
         const old = hist[k] || { shop: '', persons: {} };
         // 合并而非覆盖：原始表只有店铺业绩，不能毁掉自动归档/标准表导入的每人数据
-        hist[k] = {
-          shop: imp.shop || old.shop,
-          persons: Object.assign({}, old.persons, imp.persons),
-        };
+        const shop = imp.shop || old.shop;
+        const persons = Object.assign({}, old.persons, imp.persons);
+        hist[k] = { shop, persons };
+        // 只有实际变化才盖新 ts（未变化保留旧 ts，避免云端合并误判）
+        if (shop !== old.shop || JSON.stringify(persons) !== JSON.stringify(old.persons)) {
+          hist[k].ts = Date.now();
+        }
         saved++;
       });
       if (saved === 0) {
         showToast('⚠ 导入数据均为今天或未来，已跳过');
         return;
       }
-      const keys = Object.keys(hist).sort();
-      while (keys.length > 90) { delete hist[keys.shift()]; }
-      localStorage.setItem('report_history', JSON.stringify(hist));
+      saveHistory(hist);
       recomputeCarryChain(); // 按实际业绩重算整月追补链
       state.targets = getTodayEffTargets();
       renderSalesList(); // 主页面追补提示与达成率刷新
@@ -1835,20 +2282,46 @@ ${salesLines}`;
           if (saved.date === today) {
             return { date: today, shop: saved.shop || '', persons: saved.persons };
           }
-          // 跨天：归档昨日数据并自动结算追补差额，再继承人员名单、业绩清空、休息状态重置
-          archiveAndSettle(saved);
+          // 跨天：暂存待归档（归档延后到首次云端拉取完成后，见 maybeArchiveAndSettle），
+          // 继承人员名单、业绩清空、休息状态重置。ts 继承旧戳——rollover 是派生重置，
+          // 若盖新戳会在云端合并时抹掉同事已填的新业绩。
+          pendingArchive = saved;
           return {
             date: today,
             shop: '',
-            persons: saved.persons.map(p => ({ name: p.name, isRest: false, sales: '' })),
+            persons: saved.persons.map(p => ({ name: p.name, isRest: false, sales: '', ts: p.ts || 0 })),
           };
         }
       } catch (e) {}
       return { date: today, shop: '', persons: [] };
     }
 
+    // 落盘 + 同步打点：只有相对上次落盘真正变化的人（新增/改业绩/改休息/店铺业绩变化）
+    // 才盖新 ts。ts 是云端合并的胜负依据——全量盖戳会让离线设备的陈旧值压掉同事新数据。
+    let prevSalesJson = JSON.stringify(state.sales); // 上次落盘快照（diff 基准）
     function saveSales() {
-      localStorage.setItem('report_sales', JSON.stringify(state.sales));
+      const now = Date.now();
+      let prev = {};
+      try { prev = JSON.parse(prevSalesJson || '{}'); } catch (e) {}
+      let changed = false;
+      if (state.sales.shop !== prev.shop) {
+        state.sales.ts = now; // 对象级 ts 用于同日合并时店铺业绩的胜负
+        changed = true;
+      }
+      (state.sales.persons || []).forEach(function(p) {
+        if (typeof p.ts !== 'number') p.ts = 0;
+        const op = (prev.persons || []).find(function(x) { return x.name === p.name; });
+        if (!op || op.sales !== p.sales || op.isRest !== p.isRest) {
+          p.ts = now;
+          changed = true;
+        }
+      });
+      if (changed) {
+        const json = JSON.stringify(state.sales);
+        localStorage.setItem('report_sales', json);
+        prevSalesJson = json;
+        syncMarkDirty();
+      }
     }
 
     // ==================== 差额追补 ====================
@@ -1939,7 +2412,8 @@ ${salesLines}`;
       (personsArr || []).forEach(x => { personActuals[x.name] = x; });
       const out = settleStep(plan, prev, prevApplies, shopActualStr, personActuals, false);
       const prevStored = prev ? { date: prev.date, shop: prev.shop, persons: prev.persons } : undefined;
-      localStorage.setItem('report_carry', JSON.stringify({ date: dateStr, shop: out.shop, persons: out.persons, prev: prevStored }));
+      localStorage.setItem('report_carry', JSON.stringify({ date: dateStr, shop: out.shop, persons: out.persons, prev: prevStored, ts: Date.now() }));
+      syncMarkDirty();
     }
 
     // 复制报表时结算当天（同天重复结算 = 覆盖，取最新数据）
@@ -1948,16 +2422,63 @@ ${salesLines}`;
       settleDay(dateKey(), youzan, state.sales.persons);
     }
 
-    // 跨天：昨天数据归档进历史（90 天），并结算昨天的差额
-    function archiveAndSettle(saved) {
-      const hist = loadHistory();
-      const persons = {};
-      saved.persons.forEach(p => { if (!p.isRest && p.sales !== '') persons[p.name] = String(p.sales); });
-      hist[saved.date] = { shop: saved.shop || '0', persons };
+    function saveHistory(hist) {
       const keys = Object.keys(hist).sort();
       while (keys.length > 90) { delete hist[keys.shift()]; }
       localStorage.setItem('report_history', JSON.stringify(hist));
-      settleDay(saved.date, saved.shop || '0', saved.persons);
+      syncMarkDirty();
+    }
+
+    // 跨天归档（延后到首次云端拉取完成后由 syncSetup/syncFinish 调用）：
+    // 本设备昨天快照只"贡献"非空值，不覆盖已归档日（防离线旧设备用陈旧数据压掉
+    // 云端同事的业绩）；随后重算追补链（链没覆盖到的场景再直接结算该天）。
+    function maybeArchiveAndSettle() {
+      if (!pendingArchive) return;
+      const saved = pendingArchive;
+      pendingArchive = null;
+      const hist = loadHistory();
+      const persons = {};
+      saved.persons.forEach(function(p) {
+        if (!p.isRest && p.sales !== '') persons[p.name] = String(p.sales);
+      });
+      const existing = hist[saved.date];
+      if (existing) {
+        // 该天已归档（本机或云端同事归档过）：只补空缺，不覆盖已有值
+        let changed = false;
+        if ((!existing.shop || existing.shop === '0') && saved.shop && saved.shop !== '0') {
+          existing.shop = String(saved.shop);
+          changed = true;
+        }
+        Object.keys(persons).forEach(function(n) {
+          const v = existing.persons && existing.persons[n];
+          if (!v) {
+            existing.persons = existing.persons || {};
+            existing.persons[n] = persons[n];
+            changed = true;
+          }
+        });
+        if (changed) {
+          existing.ts = Date.now();
+          saveHistory(hist);
+        }
+      } else {
+        hist[saved.date] = { shop: saved.shop || '0', persons: persons, ts: Date.now() };
+        saveHistory(hist);
+      }
+      // 结算：优先链重算（history 已含该天，整月链从头算）；链未覆盖（当月 1 号/无历史）时直接结算该天
+      const recomputed = recomputeCarryChain();
+      if (!recomputed) {
+        const dayData = loadHistory()[saved.date];
+        if (dayData) {
+          const arr = [];
+          Object.keys(dayData.persons || {}).forEach(function(n) {
+            arr.push({ name: n, isRest: false, sales: String(dayData.persons[n]) });
+          });
+          settleDay(saved.date, dayData.shop || '0', arr);
+        } else {
+          settleDay(saved.date, saved.shop || '0', saved.persons);
+        }
+      }
     }
 
     // ==================== 每日业绩：追补链重算 ====================
@@ -1996,21 +2517,31 @@ ${salesLines}`;
       const now = new Date();
       const y = now.getFullYear(), m = now.getMonth() + 1;
       const todayD = now.getDate();
-      if (todayD <= 1) return; // 今天为当月 1 号：无历史天，不写 carry
+      if (todayD <= 1) return false; // 今天为当月 1 号：无历史天，不写 carry
       const chain = computePerfChain(y, m);
       const settledKey = chain[dateKeyOf(y, m, todayD - 1)].carryOut.date; // 最后一个有数据的结算日
-      if (!settledKey) return; // 本月历史无业绩数据：不覆盖在线结算结果
+      if (!settledKey) return false; // 本月历史无业绩数据：不覆盖在线结算结果
       const carryOut = chain[settledKey].carryOut;
       const carryIn = chain[settledKey].carryIn;
       const prevStored = carryIn && (carryIn.shop > 0 || Object.keys(carryIn.persons || {}).some(n => (carryIn.persons[n] || 0) > 0))
         ? { date: carryIn.date, shop: carryIn.shop, persons: carryIn.persons }
         : undefined;
-      localStorage.setItem('report_carry', JSON.stringify({
-        date: settledKey,
-        shop: carryOut.shop,
-        persons: carryOut.persons,
-        prev: prevStored,
-      }));
+      // 内容没变就不写（不盖新 ts、不触发同步推送，避免各设备互推空转）
+      const cur = loadCarry();
+      const same = cur && cur.date === settledKey && cur.shop === carryOut.shop &&
+        JSON.stringify(cur.persons || {}) === JSON.stringify(carryOut.persons || {}) &&
+        JSON.stringify(cur.prev || null) === JSON.stringify(prevStored || null);
+      if (!same) {
+        localStorage.setItem('report_carry', JSON.stringify({
+          date: settledKey,
+          shop: carryOut.shop,
+          persons: carryOut.persons,
+          prev: prevStored,
+          ts: Date.now(),
+        }));
+        syncMarkDirty();
+      }
+      return true;
     }
 
     // 查看/导出用：链 + 计划 + 实际汇总；今天行取实时录入（有赞 + 每人业绩）。
@@ -2074,11 +2605,12 @@ ${salesLines}`;
 
     function saveDayTargets(dateStr, newTargets) {
       const all = loadTargetsAll();
-      all[dateStr] = newTargets;
+      all[dateStr] = Object.assign({}, newTargets, { ts: Date.now() });
       // 保留最近 90 天（支持月底提前导入下月整月数据）
       const keys = Object.keys(all).sort();
       while (keys.length > 90) { delete all[keys.shift()]; }
       localStorage.setItem('report_targets', JSON.stringify(all));
+      syncMarkDirty();
     }
 
     // ==================== 月度目标表解析 ====================
@@ -2319,8 +2851,8 @@ ${salesLines}`;
       return Math.round(s / t * 100) + '%';
     }
 
-    function renderSalesList() {
-      syncSalesInputs();
+    function renderSalesList(skipSync) {
+      if (!skipSync) syncSalesInputs();
       const container = document.getElementById('salesList');
       let html = '';
       const hint = carryHintHtml();
@@ -2414,7 +2946,9 @@ ${salesLines}`;
       const carry = loadCarry();
       if (carry && carry.persons && carry.persons[name]) {
         delete carry.persons[name];
+        carry.ts = Date.now(); // 让云端合并时删除操作生效
         localStorage.setItem('report_carry', JSON.stringify(carry));
+        syncMarkDirty();
       }
       renderSalesList();
     }
