@@ -968,7 +968,15 @@
   <script>
     // ==================== State ====================
     const state = {
-      storeName: localStorage.getItem('report_storeName') || '广州永庆坊店',
+      storeName: (() => {
+        const raw = localStorage.getItem('report_storeName');
+        if (!raw) return '广州永庆坊店';
+        try {
+          const obj = JSON.parse(raw);
+          if (obj && typeof obj.value === 'string') return obj.value;
+        } catch (e) {}
+        return raw; // 旧格式纯字符串
+      })(),
       refundEntries: [],
       weworkEntries: [],
       currentModal: null, // 'refund' | 'wework' | 'target' | null
@@ -1215,6 +1223,36 @@
         <input type="text" inputmode="numeric" id="shopTargetInput" value="${dayTargets.shop || ''}" placeholder="0">
         <span class="unit">元</span>
       </div>`;
+
+      // 追补已计入目标：所选日为今天及未来、本月有挂起追补时，显示 目标+追补=生效目标。
+      // 输入框保持原始目标不变（追补是显示层叠加，与结算链/导入/每月清零天然兼容）；
+      // 过去日期不显示（历史差额看「每日业绩」）。
+      const selKey = dateKeyOf(sel.y, sel.m, sel.d);
+      const todayKey = dateKey();
+      if (selKey >= todayKey) {
+        const carry = loadCarry();
+        if (carry && carryAppliesTo(carry, selKey)) {
+          const eff = effTargets(dayTargets, carry, selKey);
+          const parts = [];
+          if (carry.shop > 0) {
+            parts.push(dayTargets.shop
+              ? '店铺 ' + escapeHtml(dayTargets.shop) + ' + 追补 ' + fmtNum(carry.shop) + ' = 生效 ' + escapeHtml(eff.shop || '—')
+              : '店铺未设目标，追补 ' + fmtNum(carry.shop) + ' 挂起');
+          }
+          state.sales.persons.forEach(p => {
+            const v = (carry.persons && carry.persons[p.name]) || 0;
+            if (v <= 0) return;
+            const plan = dayTargets.persons[p.name];
+            parts.push(escapeHtml(p.name) + (plan
+              ? ' ' + escapeHtml(plan) + '+' + fmtNum(v) + '=' + escapeHtml(eff.persons[p.name] || '—')
+              : ' +' + fmtNum(v) + '=' + fmtNum(v)));
+          });
+          if (parts.length > 0) {
+            html += '<div class="carry-hint">追补已计入目标：' + parts.join('｜') + '</div>';
+          }
+        }
+      }
+
       html += '<div class="section-hint-row"><span>个人日目标</span><button class="btn-apply-month" onclick="applyPersonTargetsToMonth()">应用到整月</button></div>';
 
       if (state.sales.persons.length === 0) {
