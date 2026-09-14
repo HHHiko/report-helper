@@ -1,5 +1,5 @@
 // Service Worker — 交班报表助手
-const CACHE_NAME = 'report-helper-v8';
+const CACHE_NAME = 'report-helper-v7';
 const ASSETS = [
   './',
   './index.html',
